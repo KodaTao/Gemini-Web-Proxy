@@ -1,0 +1,24 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Go
+server/server
+*.exe
+data.db
+
+# Dependencies
+node_modules/
+
+# Build
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Extension build output
+extension/dist/

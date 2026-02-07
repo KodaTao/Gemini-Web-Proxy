@@ -1,0 +1,9 @@
+server:
+  port: 8080
+
+database:
+  path: "./data.db"
+
+websocket:
+  ping_interval: 30
+  pong_timeout: 10
