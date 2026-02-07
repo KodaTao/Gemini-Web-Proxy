@@ -23,10 +23,11 @@
 * **WebSocket**: Gorilla WebSocket (`github.com/gorilla/websocket`)
 * **ORM**: GORM (`gorm.io/gorm`)
 * **数据库**: SQLite (`github.com/mattn/go-sqlite3`)
-* **配置管理**: YAML (`gopkg.in/yaml.v3`)，配置文件为项目根目录 `config.yaml`
+* **配置管理**: YAML (`gopkg.in/yaml.v3`)，支持 `-c` 参数指定配置文件路径，不指定则使用内置默认配置
 * **功能职责**:
-  * 启动时读取 `config.yaml` 配置文件。
-  * 启动 HTTP Server 监听配置端口（默认 `:8080`）。
+  * 启动时通过 `-c` 参数读取配置文件，未指定则使用默认配置并打印到控制台。
+  * 支持 `-api-key` 参数设置 API Key，部署到公网时保证安全性。
+  * 启动 HTTP Server 监听配置端口（默认 `:6543`）。
   * 提供 `/ws` 路由供插件连接。
   * 提供 `/v1/chat/completions` 路由供外部调用（兼容 OpenAI API 格式）。
   * 支持 SSE 流式返回 (`stream: true`) 和非流式返回。
@@ -36,7 +37,7 @@
 
 ```yaml
 server:
-  port: 8080               # HTTP 服务端口
+  port: 6543               # HTTP 服务端口
 
 database:
   path: "./data.db"         # SQLite 数据库文件路径
@@ -44,7 +45,13 @@ database:
 websocket:
   ping_interval: 30         # 心跳间隔 (秒)
   pong_timeout: 10          # 等待 PONG 超时 (秒)
+
+api_key: ""                 # API Key，为空则不验证
 ```
+
+**命令行参数**:
+* `-c <path>`: 指定 config.yaml 文件路径，不指定则使用默认配置
+* `-api-key <key>`: 设置 API Key（优先级高于配置文件中的 api_key）
 
 ### 2.2 插件端 (Extension)
 
@@ -191,7 +198,7 @@ GORM 模型：
 
 ### 6.1 连接与保活 (Heartbeat)
 
-* **Extension (Background)**: 启动时连接 `ws://localhost:8080/ws`。
+* **Extension (Background)**: 启动时连接 `ws://localhost:6543/ws`。
 * **Server**: 每 30 秒发送 `{"type": "PING"}`。
 * **Extension**: 收到 PING 后立即回复 `{"type": "PONG"}`。
 * **断线重连**: Extension 需监听 `onclose`，若断开则每 5 秒尝试重连。

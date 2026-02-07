@@ -92,15 +92,17 @@ type ChatHandler struct {
 	TaskManager *TaskManager
 	DB          *gorm.DB
 	semaphore   chan struct{} // 并发限制：同一时间只允许一个请求
+	apiKey      string        // API Key，为空则不验证
 }
 
 // NewChatHandler 创建 ChatHandler 实例
-func NewChatHandler(hub *Hub, tm *TaskManager, db *gorm.DB) *ChatHandler {
+func NewChatHandler(hub *Hub, tm *TaskManager, db *gorm.DB, apiKey string) *ChatHandler {
 	return &ChatHandler{
 		Hub:         hub,
 		TaskManager: tm,
 		DB:          db,
 		semaphore:   make(chan struct{}, 1),
+		apiKey:      apiKey,
 	}
 }
 
@@ -117,6 +119,30 @@ func (h *ChatHandler) Handle(c *gin.Context) {
 			},
 		})
 		return
+	}
+
+	// API Key 验证
+	if h.apiKey != "" {
+		auth := c.GetHeader("Authorization")
+		if auth == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": gin.H{
+					"message": "missing Authorization header",
+					"type":    "authentication_error",
+				},
+			})
+			return
+		}
+		token := strings.TrimPrefix(auth, "Bearer ")
+		if token == auth || token != h.apiKey {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": gin.H{
+					"message": "invalid API key",
+					"type":    "authentication_error",
+				},
+			})
+			return
+		}
 	}
 
 	var req ChatRequest

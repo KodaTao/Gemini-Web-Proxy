@@ -58,6 +58,14 @@
 - [x] 6.4 单元测试验证并发控制逻辑（11 tests all passed）
 - [x] 6.5 构建并端到端测试 ✅ 测试通过
 
+## 配置灵活化 & API Key 安全
+
+- [x] 7.1 main.go 支持 `-c` 参数指定 config.yaml 路径
+- [x] 7.2 不指定配置文件时使用内置默认配置，启动后打印生效配置到控制台
+- [x] 7.3 新增 `-api-key` 参数和 config.yaml 中的 `api_key` 字段，支持 Bearer Token 验证
+- [x] 7.4 ChatHandler 增加 API Key 认证中间件逻辑，无效 key 返回 401
+- [x] 7.5 单元测试验证 API Key 认证（TestChatAPIKeyAuth passed）
+
 ## 反检测优化
 
 - [x] 5.1 输入方式改为剪贴板粘贴：写入系统剪贴板 → 模拟 Cmd+V 粘贴，更符合人类操作习惯

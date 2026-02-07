@@ -1,5 +1,6 @@
 server:
   port: 6543
+  mode: "release" # debug/test/release
 
 database:
   path: "./data.db"
@@ -7,3 +8,5 @@ database:
 websocket:
   ping_interval: 30
   pong_timeout: 10
+
+api_key: "test-key"

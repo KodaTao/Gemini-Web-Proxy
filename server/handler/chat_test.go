@@ -33,7 +33,7 @@ func setupChatTest(t *testing.T) (*Hub, *TaskManager, *httptest.Server, *gin.Eng
 		t.Fatal(err)
 	}
 
-	chatHandler := NewChatHandler(hub, tm, db)
+	chatHandler := NewChatHandler(hub, tm, db, "")
 
 	r := gin.New()
 	r.GET("/ws", hub.HandleWS)
@@ -231,7 +231,7 @@ func TestChatNoExtension(t *testing.T) {
 	tmpDir := t.TempDir()
 	db, _ := model.InitDB(filepath.Join(tmpDir, "test.db"))
 
-	chatHandler := NewChatHandler(hub, tm, db)
+	chatHandler := NewChatHandler(hub, tm, db, "")
 
 	r := gin.New()
 	r.POST("/v1/chat/completions", chatHandler.Handle)
@@ -257,7 +257,7 @@ func TestChatNoUserMessage(t *testing.T) {
 	tmpDir := t.TempDir()
 	db, _ := model.InitDB(filepath.Join(tmpDir, "test.db"))
 
-	chatHandler := NewChatHandler(hub, tm, db)
+	chatHandler := NewChatHandler(hub, tm, db, "")
 
 	r := gin.New()
 	r.POST("/v1/chat/completions", chatHandler.Handle)
@@ -270,6 +270,53 @@ func TestChatNoUserMessage(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestChatAPIKeyAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.WebSocketConfig{PingInterval: 60, PongTimeout: 10}
+	hub := NewHub(cfg)
+	tm := NewTaskManager()
+
+	tmpDir := t.TempDir()
+	db, _ := model.InitDB(filepath.Join(tmpDir, "test.db"))
+
+	chatHandler := NewChatHandler(hub, tm, db, "my-secret-key")
+
+	r := gin.New()
+	r.POST("/v1/chat/completions", chatHandler.Handle)
+
+	reqBody := `{"model":"gemini","messages":[{"role":"user","content":"Hello"}]}`
+
+	// 无 Authorization 头 → 401
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 without auth header, got %d", w.Code)
+	}
+
+	// 错误的 key → 401
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer wrong-key")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 with wrong key, got %d", w.Code)
+	}
+
+	// 正确的 key → 应该通过认证（会因为无插件返回 503）
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer my-secret-key")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 with correct key (no extension), got %d", w.Code)
 	}
 }
 

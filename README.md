@@ -70,23 +70,9 @@
 
 > 或者从源码编译：参见 [从源码构建](#从源码构建)
 
-### 2. 配置并启动 Server
+### 2. 启动 Server
 
-创建 `config.yaml`（与二进制文件同目录）：
-
-```yaml
-server:
-  port: 6543
-
-database:
-  path: "./data.db"
-
-websocket:
-  ping_interval: 30
-  pong_timeout: 10
-```
-
-启动 Server：
+**最简启动**（使用默认配置，无需 config.yaml）：
 
 ```bash
 # macOS / Linux
@@ -96,6 +82,20 @@ chmod +x gemini-web-proxy-*
 # Windows
 gemini-web-proxy-windows-amd64.exe
 ```
+
+**指定配置文件**：
+
+```bash
+./gemini-web-proxy-darwin-arm64 -c ./config.yaml
+```
+
+**设置 API Key**（公网部署时推荐）：
+
+```bash
+./gemini-web-proxy-darwin-arm64 -api-key your-secret-key
+```
+
+> 设置 API Key 后，客户端需在请求头中携带 `Authorization: Bearer your-secret-key`。
 
 ### 3. 构建并安装 Chrome 插件
 
@@ -176,7 +176,8 @@ curl http://localhost:6543/v1/chat/completions \
 | ChatBox | `http://localhost:6543/v1` | 任意值 |
 | Open WebUI | `http://localhost:6543/v1` | 任意值 |
 
-> Server 不验证 API Key，填写任意非空值即可。
+> 如果未设置 `-api-key`，Server 不验证 API Key，填写任意非空值即可。
+> 如果设置了 `-api-key`，则需填写对应的 Key 值。
 
 ### Python OpenAI SDK
 
@@ -204,16 +205,25 @@ print(response.choices[0].message.content)
 |--------|------|
 | 200 | 成功 |
 | 400 | 请求格式错误或缺少 user 消息 |
+| 401 | API Key 验证失败 |
 | 429 | 插件正忙或 Server 正在处理其他请求 |
 | 503 | 插件未连接 |
 
 ## 配置
+
+### 命令行参数
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `-c <path>` | 指定 config.yaml 文件路径 | 不指定则使用默认配置 |
+| `-api-key <key>` | 设置 API Key（优先级高于配置文件） | 空（不验证） |
 
 ### config.yaml
 
 ```yaml
 server:
   port: 6543               # HTTP 服务端口
+  mode: "release"          # debug/test/release
 
 database:
   path: "./data.db"         # SQLite 数据库文件路径
@@ -221,7 +231,11 @@ database:
 websocket:
   ping_interval: 30         # 心跳间隔 (秒)
   pong_timeout: 10          # 等待 PONG 超时 (秒)
+
+api_key: ""                 # API Key，为空则不验证
 ```
+
+> 不指定 `-c` 参数时，Server 使用内置默认配置运行，启动时会打印生效的配置信息。
 
 ### 插件配置
 
