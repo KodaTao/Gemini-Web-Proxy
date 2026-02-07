@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini Web Proxy</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Gemini Web Proxy</h1>
+
+    <div class="status-bar">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">未连接</span>
+    </div>
+
+    <div class="form-group">
+      <label for="wsUrl">WebSocket 地址</label>
+      <input type="text" id="wsUrl" placeholder="ws://localhost:8080/ws">
+    </div>
+
+    <button id="saveBtn">保存配置</button>
+    <div id="message" class="message"></div>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

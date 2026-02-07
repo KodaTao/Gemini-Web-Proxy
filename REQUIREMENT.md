@@ -50,10 +50,12 @@ websocket:
 
 * **规范**: Manifest V3
 * **语言**: TypeScript
-* **构建工具**: Vite (使用 `@crxjs/vite-plugin` 或类似插件)
+* **构建工具**: Vite (library 模式分别打包各入口文件)
+* **配置存储**: `chrome.storage.local`
 * **核心模块**:
-  * `background.ts`: Service Worker，负责 WS 连接保活、心跳、任务分发。
+  * `background.ts`: Service Worker，负责 WS 连接保活、心跳、任务分发。从 storage 读取 WS 地址，配置变更时自动重连。
   * `content.ts`: 注入 `gemini.google.com`，负责 DOM 操作 (输入 prompt) 和 MutationObserver (监听回复)。
+  * `popup.html/ts/css`: 插件配置页面，可配置 WebSocket 地址（默认 `ws://localhost:8080/ws`），使用 `chrome.storage.local` 持久化。
 
 ---
 

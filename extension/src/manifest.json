@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Gemini Web Proxy",
+  "version": "0.1.0",
+  "description": "通过本地 API 代理与 Gemini 网页端对话",
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://gemini.google.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://gemini.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Gemini Web Proxy"
+  }
+}

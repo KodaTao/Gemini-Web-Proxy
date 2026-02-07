@@ -11,10 +11,12 @@
 
 ## Step 2: 初始化 Chrome Extension 基础架构
 
-- [ ] 2.1 使用 Vite + TypeScript 初始化 Extension 项目，配置 Manifest V3
-- [ ] 2.2 实现 `background.ts`: WebSocket 连接、心跳响应 (PONG)、断线重连 (5s 间隔)
-- [ ] 2.3 实现 Background 与 Content Script 之间的消息转发机制
-- [ ] 2.4 验证插件能成功加载并连接到 Server
+- [x] 2.1 使用 Vite + TypeScript 初始化 Extension 项目，配置 Manifest V3
+- [x] 2.2 实现共享类型定义 (types.ts)
+- [x] 2.3 实现 Popup 配置页面 (popup.html/ts/css)，支持配置 WS 地址、显示连接状态
+- [x] 2.4 实现 `background.ts`: WebSocket 连接、心跳响应 (PONG)、断线重连 (5s)、从 storage 读取配置、消息转发
+- [x] 2.5 实现 `content.ts`: 消息监听框架 (chrome.runtime.onMessage)
+- [x] 2.6 构建验证通过 (Vite build, dist 目录生成正确) ⏳ 等待用户在 Chrome 中手动加载插件测试
 
 ## Step 3: 实现 OpenAI 兼容 API
 
