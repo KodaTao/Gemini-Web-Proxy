@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,14 +16,47 @@ import (
 	"github.com/KodaTao/Gemini-Web-Proxy/server/model"
 )
 
+// XML 序列化结构：将 OpenAI messages 转为 XML 格式发送给 Gemini
+type CData struct {
+	Value string `xml:",cdata"`
+}
+
+type PromptXmlMessage struct {
+	Role    string `xml:"role,attr"`
+	Content CData  `xml:",innerxml"`
+}
+
+type PromptXml struct {
+	XMLName  xml.Name            `xml:"chat_history"`
+	Messages []*PromptXmlMessage `xml:"message"`
+}
+
+// messagesToXML 将 OpenAI 格式的 messages 序列化为 XML 字符串
+func messagesToXML(messages []ChatMessage) (string, error) {
+	promptXml := &PromptXml{}
+	for _, msg := range messages {
+		promptXml.Messages = append(promptXml.Messages, &PromptXmlMessage{
+			Role: msg.Role,
+			Content: CData{
+				Value: "\n" + msg.Content + "\n",
+			},
+		})
+	}
+	data, err := xml.MarshalIndent(promptXml, "", "    ")
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 const requestTimeout = 120 * time.Second
 
 // OpenAI 兼容请求/响应结构
 
 type ChatRequest struct {
-	Model    string          `json:"model"`
-	Messages []ChatMessage   `json:"messages"`
-	Stream   bool            `json:"stream"`
+	Model    string        `json:"model"`
+	Messages []ChatMessage `json:"messages"`
+	Stream   bool          `json:"stream"`
 }
 
 type ChatMessage struct {
@@ -31,12 +65,12 @@ type ChatMessage struct {
 }
 
 type ChatResponse struct {
-	ID      string       `json:"id"`
-	Object  string       `json:"object"`
-	Created int64        `json:"created"`
-	Model   string       `json:"model"`
-	Choices []Choice     `json:"choices"`
-	Usage   Usage        `json:"usage"`
+	ID      string   `json:"id"`
+	Object  string   `json:"object"`
+	Created int64    `json:"created"`
+	Model   string   `json:"model"`
+	Choices []Choice `json:"choices"`
+	Usage   Usage    `json:"usage"`
 }
 
 type Choice struct {
@@ -57,25 +91,74 @@ type ChatHandler struct {
 	Hub         *Hub
 	TaskManager *TaskManager
 	DB          *gorm.DB
+	semaphore   chan struct{} // 并发限制：同一时间只允许一个请求
+}
+
+// NewChatHandler 创建 ChatHandler 实例
+func NewChatHandler(hub *Hub, tm *TaskManager, db *gorm.DB) *ChatHandler {
+	return &ChatHandler{
+		Hub:         hub,
+		TaskManager: tm,
+		DB:          db,
+		semaphore:   make(chan struct{}, 1),
+	}
 }
 
 func (h *ChatHandler) Handle(c *gin.Context) {
+	// 并发控制：server 端信号量 + 插件端状态双重检查
+	select {
+	case h.semaphore <- struct{}{}:
+		defer func() { <-h.semaphore }()
+	default:
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error": gin.H{
+				"message": "server is already processing a request, please try again later",
+				"type":    "rate_limit_error",
+			},
+		})
+		return
+	}
+
 	var req ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
 		return
 	}
 
-	// 提取最后一条 user 消息作为 prompt
-	prompt := ""
-	for i := len(req.Messages) - 1; i >= 0; i-- {
-		if req.Messages[i].Role == "user" {
-			prompt = req.Messages[i].Content
+	// 检查是否包含 user 消息
+	hasUserMessage := false
+	for _, msg := range req.Messages {
+		if msg.Role == "user" {
+			hasUserMessage = true
 			break
 		}
 	}
-	if prompt == "" {
+	if !hasUserMessage {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no user message found"})
+		return
+	}
+
+	// 将所有 messages 序列化为 XML 格式作为 prompt
+	prompt, err := messagesToXML(req.Messages)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to serialize messages: %v", err)})
+		return
+	}
+
+	// 检查插件是否连接
+	if h.Hub.GetClient() == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "extension not connected"})
+		return
+	}
+
+	// 检查插件端是否空闲
+	if !h.Hub.IsExtensionReady() {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error": gin.H{
+				"message": "extension is busy, please try again later",
+				"type":    "rate_limit_error",
+			},
+		})
 		return
 	}
 

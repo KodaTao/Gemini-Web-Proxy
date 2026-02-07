@@ -47,6 +47,16 @@
 - [x] 模型选择：新对话时自动检查并确保选择 Pro 模型
 - [x] 对话自动清理：回复完成后自动删除当前对话（菜单 → 删除 → 确认）
 - [x] SSE 流式响应格式修复：ChatMessage 添加 omitempty 符合 OpenAI 规范
+- [x] 多角色消息支持：messages 序列化为 XML 格式（chat_history + CDATA），支持 system/user/assistant 完整对话上下文
+- [x] 修复 XML 内容粘贴失败：粘贴成功判断改为检查内容长度，策略3 innerHTML 转义 HTML 特殊字符
+
+## 并发控制 & 插件状态同步
+
+- [x] 6.1 Hub 增加 extensionReady 状态管理：处理 EVENT_STATUS 消息，维护插件 idle/busy 状态
+- [x] 6.2 ChatHandler 增加双重检查：信号量（防 server 并发）+ extensionReady（防插件忙碌），不满足返回 429
+- [x] 6.3 插件端上报状态：content.ts 在操作开始时发送 busy，完成后发送 idle
+- [x] 6.4 单元测试验证并发控制逻辑（11 tests all passed）
+- [x] 6.5 构建并端到端测试 ✅ 测试通过
 
 ## 反检测优化
 

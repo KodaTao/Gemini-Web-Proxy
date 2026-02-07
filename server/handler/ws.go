@@ -45,9 +45,10 @@ func (c *Client) Close() {
 
 // Hub 管理 WebSocket 连接
 type Hub struct {
-	mu     sync.RWMutex
-	client *Client
-	cfg    *config.WebSocketConfig
+	mu             sync.RWMutex
+	client         *Client
+	cfg            *config.WebSocketConfig
+	extensionReady bool // 插件端是否空闲（idle=true, busy=false）
 
 	// 消息回调：插件发来的消息通过此 channel 广播
 	IncomingMessages chan *WSMessage
@@ -65,6 +66,25 @@ func (h *Hub) GetClient() *Client {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.client
+}
+
+// IsExtensionReady 检查插件端是否空闲
+func (h *Hub) IsExtensionReady() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.extensionReady
+}
+
+// SetExtensionReady 设置插件端状态
+func (h *Hub) SetExtensionReady(ready bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.extensionReady = ready
+	if ready {
+		log.Println("[Hub] extension status: idle")
+	} else {
+		log.Println("[Hub] extension status: busy")
+	}
 }
 
 // SendToExtension 向插件发送消息
@@ -124,9 +144,10 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		h.client.Close()
 	}
 	h.client = client
+	h.extensionReady = true // 新连接默认空闲
 	h.mu.Unlock()
 
-	log.Println("[WS] extension connected")
+	log.Println("[WS] extension connected (status: idle)")
 
 	go h.writePump(client)
 	go h.pingPump(client)
@@ -139,10 +160,11 @@ func (h *Hub) readPump(client *Client) {
 		h.mu.Lock()
 		if h.client == client {
 			h.client = nil
+			h.extensionReady = false
 		}
 		h.mu.Unlock()
 		client.Close()
-		log.Println("[WS] extension disconnected")
+		log.Println("[WS] extension disconnected (status reset)")
 	}()
 
 	pongTimeout := time.Duration(h.cfg.PongTimeout) * time.Second
@@ -168,6 +190,18 @@ func (h *Hub) readPump(client *Client) {
 
 		// PONG 消息不需要转发
 		if msg.Type == "PONG" || msg.Type == "EVENT_PONG" {
+			continue
+		}
+
+		// 处理插件状态上报
+		if msg.Type == "EVENT_STATUS" {
+			var statusPayload struct {
+				Status string `json:"status"`
+			}
+			if msg.Payload != nil {
+				json.Unmarshal(msg.Payload, &statusPayload)
+			}
+			h.SetExtensionReady(statusPayload.Status == "idle")
 			continue
 		}
 

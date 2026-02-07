@@ -146,7 +146,25 @@ data: [DONE]
 }
 ```
 
-事件类型: `EVENT_REPLY` | `EVENT_ERROR` | `EVENT_PONG`
+### 4.3 插件 -> 服务端 (状态上报)
+
+```json
+{
+  "type": "EVENT_STATUS",
+  "payload": {
+    "status": "idle"
+  }
+}
+```
+
+状态值: `idle` (空闲，可接收新任务) | `busy` (忙碌，正在处理任务)
+
+* 插件连接后默认为 `idle` 状态。
+* 插件在开始处理 `CMD_SEND_MESSAGE` 时发送 `busy`。
+* 插件完成所有操作（包括删除对话）后发送 `idle`。
+* Server 收到 API 请求时，先检查插件状态，若为 `busy` 则直接返回 429 错误。
+
+事件类型: `EVENT_REPLY` | `EVENT_ERROR` | `EVENT_PONG` | `EVENT_STATUS`
 状态: `DONE` (完成) | `PROCESSING` (生成中)
 
 ---
@@ -181,7 +199,8 @@ GORM 模型：
 ### 6.2 发送消息流程 (核心)
 
 1. **用户** 调用 Server API: `POST /v1/chat/completions`。
-2. **Server** 提取 messages 中最后一条 user 消息作为 prompt，生成 UUID，将消息存入 DB (Status=pending)，通过 WS 发送 `CMD_SEND_MESSAGE` 给插件。
+2. **Server** 先检查并发限制（信号量）和插件端状态（`extensionReady`），若插件忙碌则返回 429 错误。通过后将所有 messages（system/user/assistant）序列化为 XML 格式作为 prompt，生成 UUID，将消息存入 DB (Status=pending)，通过 WS 发送 `CMD_SEND_MESSAGE` 给插件。
+   * **XML 格式**: 使用 `<chat_history>` 根标签，每条消息为 `<message role="..."><Content><![CDATA[...]]></Content></message>`，完整保留对话上下文。
 3. **Extension (Background)** 收到指令：
    * 检查是否存在 `gemini.google.com` 的 Tab。
    * 如果不存在，创建新 Tab 并等待加载完成。
@@ -190,7 +209,7 @@ GORM 模型：
 4. **Extension (Content Script)** 执行 DOM 操作：
    * **新对话处理**: 如果请求未携带 `conversation_id`，先通过 `Shift+Cmd+O` 快捷键创建新对话，并检查确保使用 Pro 模型。
    * **定位输入框**: 寻找 Quill 编辑器 `div.ql-editor[contenteditable="true"]`。
-   * **模拟输入**: 多策略尝试 (InputEvent beforeinput → execCommand → 剪贴板粘贴 → 直接 DOM 操作)。
+   * **模拟输入**: 多策略尝试 (剪贴板粘贴 → execCommand → 直接 DOM 操作)。输入内容为 XML 格式的完整对话历史，包含 system/user/assistant 角色。
    * **点击发送**: 等待发送按钮从 `aria-disabled` 变为可用后点击（含重试机制）。
 
 ### 6.3 接收回复流程 (核心)

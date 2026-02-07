@@ -93,8 +93,10 @@ async function simulateInput(inputEl: HTMLElement, text: string): Promise<void> 
       })
     );
     await randomDelay(100, 200);
-    if (inputEl.textContent?.includes(text)) {
-      console.log("[Content] input via clipboard paste succeeded");
+    // 检查输入框是否有内容（不用全量对比，因为 XML 标签会被 HTML 解析后 textContent 不同）
+    const pastedContent = inputEl.textContent?.trim() || "";
+    if (pastedContent.length > 0) {
+      console.log("[Content] input via clipboard paste succeeded, length:", pastedContent.length);
       return;
     }
   } catch (e) {
@@ -104,15 +106,20 @@ async function simulateInput(inputEl: HTMLElement, text: string): Promise<void> 
   // 策略2：使用 execCommand（传统方式）
   inputEl.focus();
   const execResult = document.execCommand("insertText", false, text);
-  if (execResult && inputEl.textContent?.includes(text)) {
+  if (execResult && (inputEl.textContent?.trim().length || 0) > 0) {
     console.log("[Content] input via execCommand succeeded");
     inputEl.dispatchEvent(new Event("input", { bubbles: true }));
     return;
   }
 
-  // 策略3：直接操作 DOM（最后手段）
+  // 策略3：直接操作 DOM（最后手段，需转义 HTML 特殊字符）
   console.log("[Content] all input methods failed, using direct DOM manipulation");
-  inputEl.innerHTML = `<p>${text}</p>`;
+  const escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\n/g, "<br>");
+  inputEl.innerHTML = `<p>${escaped}</p>`;
   inputEl.dispatchEvent(new Event("input", { bubbles: true }));
   inputEl.dispatchEvent(new Event("change", { bubbles: true }));
 }
@@ -432,6 +439,8 @@ async function handleSendMessage(wsMsg: WSMessage): Promise<void> {
     return;
   }
 
+  // 上报忙碌状态
+  sendStatus("busy");
   overlay.setTaskStatus("processing", "准备中...");
   console.log("[Content] sending prompt:", payload.prompt.substring(0, 50) + "...");
 
@@ -449,6 +458,7 @@ async function handleSendMessage(wsMsg: WSMessage): Promise<void> {
   if (!inputEl) {
     overlay.setTaskStatus("error", "找不到输入框");
     sendError(taskId, "cannot find input element");
+    sendStatus("idle");
     return;
   }
 
@@ -506,6 +516,7 @@ function watchForReply(taskId: string): void {
       clearInterval(pollTimer);
       overlay.setTaskStatus("error", "超时");
       sendError(taskId, "response timeout");
+      sendStatus("idle");
       return;
     }
 
@@ -526,9 +537,13 @@ function watchForReply(taskId: string): void {
         clearInterval(pollTimer);
         sendReply(taskId, currentText, "DONE");
         overlay.setTaskStatus("done");
-        // 回复完成后删除当前对话
+        // 回复完成后删除当前对话，完成后上报空闲
         deleteCurrentConversation().then(() => {
           overlay.setTaskStatus("idle");
+          sendStatus("idle");
+        }).catch(() => {
+          overlay.setTaskStatus("idle");
+          sendStatus("idle");
         });
       }
     } else {
@@ -558,6 +573,17 @@ function sendError(taskId: string, error: string): void {
       reply_to: taskId,
       type: "EVENT_ERROR",
       payload: { error },
+    },
+  });
+}
+
+function sendStatus(status: "idle" | "busy"): void {
+  console.log(`[Content] reporting status: ${status}`);
+  chrome.runtime.sendMessage({
+    action: "wsReply",
+    data: {
+      type: "EVENT_STATUS",
+      payload: { status },
     },
   });
 }

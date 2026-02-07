@@ -32,11 +32,7 @@ func main() {
 	taskManager.StartDispatcher(hub)
 
 	// 初始化 ChatHandler
-	chatHandler := &handler.ChatHandler{
-		Hub:         hub,
-		TaskManager: taskManager,
-		DB:          db,
-	}
+	chatHandler := handler.NewChatHandler(hub, taskManager, db)
 
 	// 设置路由
 	r := gin.Default()

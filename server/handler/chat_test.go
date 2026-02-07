@@ -33,7 +33,7 @@ func setupChatTest(t *testing.T) (*Hub, *TaskManager, *httptest.Server, *gin.Eng
 		t.Fatal(err)
 	}
 
-	chatHandler := &ChatHandler{Hub: hub, TaskManager: tm, DB: db}
+	chatHandler := NewChatHandler(hub, tm, db)
 
 	r := gin.New()
 	r.GET("/ws", hub.HandleWS)
@@ -231,7 +231,7 @@ func TestChatNoExtension(t *testing.T) {
 	tmpDir := t.TempDir()
 	db, _ := model.InitDB(filepath.Join(tmpDir, "test.db"))
 
-	chatHandler := &ChatHandler{Hub: hub, TaskManager: tm, DB: db}
+	chatHandler := NewChatHandler(hub, tm, db)
 
 	r := gin.New()
 	r.POST("/v1/chat/completions", chatHandler.Handle)
@@ -257,7 +257,7 @@ func TestChatNoUserMessage(t *testing.T) {
 	tmpDir := t.TempDir()
 	db, _ := model.InitDB(filepath.Join(tmpDir, "test.db"))
 
-	chatHandler := &ChatHandler{Hub: hub, TaskManager: tm, DB: db}
+	chatHandler := NewChatHandler(hub, tm, db)
 
 	r := gin.New()
 	r.POST("/v1/chat/completions", chatHandler.Handle)
