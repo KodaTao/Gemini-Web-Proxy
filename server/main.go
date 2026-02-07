@@ -63,7 +63,7 @@ func main() {
 	r.POST("/v1/chat/completions", chatHandler.Handle)
 
 	// 启动服务
-	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Server.Port)
 	log.Printf("server starting on %s", addr)
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("failed to start server: %v", err)

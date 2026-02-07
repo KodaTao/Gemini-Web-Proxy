@@ -14,6 +14,7 @@ VERSION=${1:-"dev"}
 # 获取项目根目录（脚本所在目录）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_DIR="${SCRIPT_DIR}/release"
+EXTENSION_DIR="${SCRIPT_DIR}/extension"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -91,6 +92,14 @@ build_target() {
     fi
 }
 
+build_extension() {
+  cd "${EXTENSION_DIR}"
+  npm run build || error "编译前端工程失败"
+  cp -r dist gemini-web-proxy-extension
+  tar -zcvf ../release/gemini-web-proxy-extension.tar.gz gemini-web-proxy-extension
+  rm -rf gemini-web-proxy-extension
+}
+
 # ============================================================
 # 主流程
 # ============================================================
@@ -145,6 +154,9 @@ main() {
 
     echo ""
     ok "所有平台编译完成! 文件在 release/ 目录"
+
+    build_extension
+    ok "插件端编译完成"
 }
 
 main "$@"
