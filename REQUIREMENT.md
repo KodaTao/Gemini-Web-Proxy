@@ -54,7 +54,8 @@ websocket:
 * **配置存储**: `chrome.storage.local`
 * **核心模块**:
   * `background.ts`: Service Worker，负责 WS 连接保活、心跳、任务分发。从 storage 读取 WS 地址，配置变更时自动重连。
-  * `content.ts`: 注入 `gemini.google.com`，负责 DOM 操作 (输入 prompt) 和 MutationObserver (监听回复)。
+  * `content.ts`: 注入 `gemini.google.com`，负责 DOM 操作 (输入 prompt) 和 MutationObserver (监听回复)。同时在页面右下角注入悬浮窗，实时显示 WS 连接状态和当前任务状态。
+  * `overlay.ts`: 悬浮窗模块，使用 Shadow DOM 隔离样式，支持拖拽移动，显示连接状态（绿/红点）和任务状态（空闲/处理中/完成）。
   * `popup.html/ts/css`: 插件配置页面，可配置 WebSocket 地址（默认 `ws://localhost:8080/ws`），使用 `chrome.storage.local` 持久化。
 
 ---
@@ -187,9 +188,10 @@ GORM 模型：
    * 如果存在，激活该 Tab。
    * 通过 `chrome.tabs.sendMessage` 将指令转发给 **Content Script**。
 4. **Extension (Content Script)** 执行 DOM 操作：
-   * **定位输入框**: 寻找 `div[contenteditable="true"]` 或 `rich-textarea`。
-   * **模拟输入**: 触发 `input` 事件，使用 `document.execCommand('insertText')` 写入。
-   * **点击发送**: 寻找发送按钮并点击。
+   * **新对话处理**: 如果请求未携带 `conversation_id`，先通过 `Shift+Cmd+O` 快捷键创建新对话，并检查确保使用 Pro 模型。
+   * **定位输入框**: 寻找 Quill 编辑器 `div.ql-editor[contenteditable="true"]`。
+   * **模拟输入**: 多策略尝试 (InputEvent beforeinput → execCommand → 剪贴板粘贴 → 直接 DOM 操作)。
+   * **点击发送**: 等待发送按钮从 `aria-disabled` 变为可用后点击（含重试机制）。
 
 ### 6.3 接收回复流程 (核心)
 
@@ -200,6 +202,8 @@ GORM 模型：
 2. **Extension** 将提取的内容通过 WS 发回 Server (`EVENT_REPLY`)。
    * `status: "PROCESSING"` — 生成中，附带当前已生成的文本。
    * `status: "DONE"` — 生成完成，附带完整文本。
+   * 回复内容提取时过滤思考过程区域 (`.model-thoughts`)，优先从 `.markdown` 元素获取纯文本。
+   * **回复完成后自动删除当前对话**：打开对话菜单 → 点击删除 → 确认删除弹窗。
 3. **Server** 收到回复后：
    * 如果请求是流式 (`stream: true`)：将 PROCESSING 和 DONE 事件实时转换为 SSE chunk 推送给客户端。
    * 如果请求是非流式 (`stream: false`)：等待 DONE 状态后，一次性返回完整响应。

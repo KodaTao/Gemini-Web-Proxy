@@ -1,21 +1,582 @@
 import type { InternalMessage, WSMessage } from "./types";
+import { Overlay } from "./overlay";
 
 console.log("[Content] Gemini Web Proxy content script loaded");
 
-// 监听来自 Background 的消息
+// ========== 悬浮窗 ==========
+const overlay = new Overlay();
+overlay.mount();
+
+// 定期查询连接状态
+async function pollConnectionStatus(): Promise<void> {
+  try {
+    const response = await chrome.runtime.sendMessage({ action: "getStatus" });
+    overlay.setConnectionStatus(response?.connected ? "connected" : "disconnected");
+  } catch {
+    overlay.setConnectionStatus("disconnected");
+  }
+}
+pollConnectionStatus();
+setInterval(pollConnectionStatus, 3000);
+
+// ========== DOM 操作工具函数 ==========
+
+/**
+ * 定位输入框 - 多种选择器 fallback
+ */
+function findInputElement(): HTMLElement | null {
+  const selectors = [
+    // Gemini 的 Quill 编辑器
+    'div.ql-editor[contenteditable="true"][role="textbox"]',
+    'div.ql-editor.textarea[contenteditable="true"]',
+    '.ql-editor[contenteditable="true"]',
+    // 通过 aria-label 定位（中文/英文）
+    'div[contenteditable="true"][aria-label*="提示"]',
+    'div[contenteditable="true"][aria-label*="prompt"]',
+    // 通过容器定位
+    '.text-input-field_textarea-inner div[contenteditable="true"]',
+    '.text-input-field_textarea div[contenteditable="true"]',
+    // 宽泛 fallback
+    'div[contenteditable="true"][role="textbox"]',
+  ];
+
+  for (const selector of selectors) {
+    const el = document.querySelector<HTMLElement>(selector);
+    if (el) {
+      console.log("[Content] found input with selector:", selector);
+      return el;
+    }
+  }
+  return null;
+}
+
+/**
+ * 模拟输入文本到输入框
+ * Gemini 使用 Quill 编辑器，execCommand('insertText') 可能无效
+ * 采用多种策略依次尝试
+ */
+function simulateInput(inputEl: HTMLElement, text: string): void {
+  // 聚焦
+  inputEl.focus();
+
+  // 清空现有内容
+  const selection = window.getSelection();
+  if (selection) {
+    selection.selectAllChildren(inputEl);
+    selection.deleteFromDocument();
+  }
+
+  // 策略1：使用 InputEvent 的 insertText（现代浏览器）
+  const inputEvent = new InputEvent("beforeinput", {
+    inputType: "insertText",
+    data: text,
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  });
+  const cancelled = !inputEl.dispatchEvent(inputEvent);
+
+  // 检查是否已成功输入（Quill 可能处理了 beforeinput）
+  if (!cancelled && inputEl.textContent?.includes(text)) {
+    console.log("[Content] input via beforeinput event succeeded");
+    inputEl.dispatchEvent(new InputEvent("input", { inputType: "insertText", data: text, bubbles: true }));
+    return;
+  }
+
+  // 策略2：使用 execCommand（传统方式）
+  const execResult = document.execCommand("insertText", false, text);
+  if (execResult && inputEl.textContent?.includes(text)) {
+    console.log("[Content] input via execCommand succeeded");
+    inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+    return;
+  }
+
+  // 策略3：使用剪贴板粘贴模拟
+  try {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", text);
+    const pasteEvent = new ClipboardEvent("paste", {
+      clipboardData: dataTransfer,
+      bubbles: true,
+      cancelable: true,
+    });
+    inputEl.dispatchEvent(pasteEvent);
+    if (inputEl.textContent?.includes(text)) {
+      console.log("[Content] input via paste event succeeded");
+      return;
+    }
+  } catch (e) {
+    console.log("[Content] paste simulation failed:", e);
+  }
+
+  // 策略4：直接操作 DOM（最后手段）
+  console.log("[Content] all input methods failed, using direct DOM manipulation");
+  // 对于 Quill 编辑器，需要创建 <p> 标签
+  inputEl.innerHTML = `<p>${text}</p>`;
+  // 触发多种事件通知框架
+  inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+  inputEl.dispatchEvent(new Event("change", { bubbles: true }));
+  // 触发 Quill 可能监听的 text-change 相关事件
+  inputEl.dispatchEvent(new CustomEvent("textchange", { bubbles: true }));
+}
+
+/**
+ * 定位并点击发送按钮
+ */
+function findAndClickSendButton(): boolean {
+  const selectors = [
+    // Gemini 实际使用的发送按钮
+    'button.send-button.submit[aria-label="发送"]',
+    'button.send-button.submit',
+    'button.send-button[aria-label="发送"]',
+    'button[aria-label="发送"]:not(.stop)',
+    // 英文版
+    'button.send-button[aria-label="Send"]',
+    'button[aria-label="Send message"]',
+    // 通过容器定位
+    '.send-button-container button.send-button:not(.stop)',
+  ];
+
+  for (const selector of selectors) {
+    const btn = document.querySelector<HTMLButtonElement>(selector);
+    if (btn && btn.getAttribute("aria-disabled") !== "true") {
+      console.log("[Content] clicking send button:", selector);
+      btn.click();
+      return true;
+    }
+  }
+
+  // Fallback：在 send-button-container 中查找，只找 .send-button 类的按钮
+  // 避免误点击麦克风等其他按钮
+  const container = document.querySelector(".send-button-container, .input-buttons-wrapper-bottom");
+  if (container) {
+    const btn = container.querySelector<HTMLButtonElement>("button.send-button:not(.stop)");
+    if (btn && btn.getAttribute("aria-disabled") !== "true") {
+      console.log("[Content] clicking fallback send button");
+      btn.click();
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * 获取当前对话 ID（从 URL 中提取）
+ */
+function getConversationId(): string {
+  const match = window.location.pathname.match(/\/app\/([^/?]+)/);
+  return match ? match[1] : "";
+}
+
+/**
+ * 从元素中提取文本，排除思考过程区域
+ * Gemini 的"显示思路"按钮及思考内容位于 .model-thoughts / .thoughts-container 中
+ * 实际回复内容在 .markdown 中
+ */
+function extractTextWithoutThinking(el: HTMLElement): string {
+  // 克隆节点以避免修改原 DOM
+  const clone = el.cloneNode(true) as HTMLElement;
+
+  // 移除思考过程相关元素（基于实际 Gemini DOM 结构）
+  const thinkingSelectors = [
+    ".model-thoughts",
+    ".thoughts-container",
+    ".thoughts-content",
+    ".thoughts-wrapper",
+    ".thoughts-header",
+    ".thoughts-header-button",
+    '[class*="thoughts"]',
+  ];
+
+  for (const sel of thinkingSelectors) {
+    clone.querySelectorAll(sel).forEach((node) => node.remove());
+  }
+
+  // 兜底：正则去除"显示思路"/"隐藏思路"文本
+  let text = clone.innerText.trim();
+  text = text.replace(/^(显示思路|隐藏思路|Show thinking|Hide thinking)\s*/i, "");
+  text = text.replace(/\n(显示思路|隐藏思路|Show thinking|Hide thinking)\s*/gi, "\n");
+
+  return text.trim();
+}
+
+/**
+ * 获取最后一个 model 回复的文本内容
+ */
+function getLastModelResponse(): string {
+  // 获取所有 model 回复，取最后一个
+  const modelSelectors = [
+    'model-response',
+    '[data-message-author-role="model"]',
+    '[data-message-author-role="assistant"]',
+  ];
+
+  for (const selector of modelSelectors) {
+    const allResponses = document.querySelectorAll<HTMLElement>(selector);
+    if (allResponses.length > 0) {
+      const last = allResponses[allResponses.length - 1];
+      // 优先从 .markdown 获取纯回复文本（不含思考过程）
+      // Gemini DOM: model-response > response-container > model-response-text > message-content > .markdown
+      const markdownEl = last.querySelector<HTMLElement>(".markdown");
+      if (markdownEl) {
+        const text = markdownEl.innerText.trim();
+        if (text) return text;
+      }
+      // 备选：从 message-content 获取
+      const msgContent = last.querySelector<HTMLElement>("message-content");
+      if (msgContent) {
+        const text = msgContent.innerText.trim();
+        if (text) return text;
+      }
+      // 最后手段：从整个元素提取，排除思考区域
+      const text = extractTextWithoutThinking(last);
+      if (text) return text;
+    }
+  }
+
+  return "";
+}
+
+/**
+ * 检测是否正在生成中
+ */
+function isGenerating(): boolean {
+  // 检测 Gemini 的停止按钮（正在生成时显示 .stop 类）
+  const stopBtn = document.querySelector('button.send-button.stop:not([aria-disabled="true"])');
+  if (stopBtn) return true;
+
+  // 备用：检测 aria-label
+  const stopSelectors = [
+    'button[aria-label="Stop generating"]',
+    'button[aria-label="停止生成"]',
+    'button[aria-label="Stop"]',
+  ];
+  for (const selector of stopSelectors) {
+    if (document.querySelector(selector)) return true;
+  }
+
+  return false;
+}
+
+// ========== 新对话 & 模型选择 ==========
+
+/**
+ * 判断当前是否在已有对话中（URL 包含 /app/xxxxx）
+ */
+function isInExistingConversation(): boolean {
+  return /\/app\/[a-zA-Z0-9]+/.test(window.location.pathname);
+}
+
+/**
+ * 创建新对话：模拟 Shift+Command+O 快捷键
+ */
+async function startNewConversation(): Promise<boolean> {
+  // 如果当前已在首页（/app 且不是 /app/xxxx），无需新建
+  if (!isInExistingConversation()) {
+    console.log("[Content] already on new conversation page");
+    return true;
+  }
+
+  console.log("[Content] creating new conversation via Shift+Cmd+O");
+
+  // 模拟 Shift+Command+O 快捷键
+  const keyEvent = new KeyboardEvent("keydown", {
+    key: "O",
+    code: "KeyO",
+    keyCode: 79,
+    shiftKey: true,
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  document.dispatchEvent(keyEvent);
+
+  // 等待页面导航完成
+  await waitForNewPage();
+  return true;
+}
+
+/**
+ * 等待页面变为新对话状态
+ */
+async function waitForNewPage(): Promise<void> {
+  for (let i = 0; i < 20; i++) {
+    await sleep(500);
+    // 检查是否已加载完成：输入框存在 && 不在旧对话中
+    const input = findInputElement();
+    if (input && !isInExistingConversation()) {
+      console.log("[Content] new conversation page ready");
+      return;
+    }
+  }
+  console.log("[Content] timeout waiting for new page");
+}
+
+/**
+ * 获取当前选择的模型名称
+ */
+function getCurrentModelName(): string {
+  // 输入框区域的模型选择器按钮
+  const labelContainer = document.querySelector(
+    '[data-test-id="bard-mode-menu-button"] [data-test-id="logo-pill-label-container"] span,' +
+    '[data-test-id="bard-mode-menu-button"] .input-area-switch-label span'
+  );
+  if (labelContainer) {
+    return labelContainer.textContent?.trim() || "";
+  }
+  return "";
+}
+
+/**
+ * 确保选择了 Pro 模型
+ * 如果当前已是 Pro，直接返回；否则打开选择器切换
+ */
+async function ensureProModel(): Promise<void> {
+  const currentModel = getCurrentModelName();
+  console.log("[Content] current model:", currentModel);
+
+  if (currentModel.toLowerCase().includes("pro")) {
+    console.log("[Content] already using Pro model");
+    return;
+  }
+
+  // 点击模型选择器按钮，打开下拉菜单
+  const menuButton = document.querySelector<HTMLElement>(
+    '[data-test-id="bard-mode-menu-button"] button, [data-test-id="bard-mode-menu-button"]'
+  );
+  if (!menuButton) {
+    console.log("[Content] model picker button not found, skipping");
+    return;
+  }
+
+  menuButton.click();
+  await sleep(500);
+
+  // 在下拉菜单中查找包含 "Pro" 的选项
+  const menuItems = document.querySelectorAll<HTMLElement>(
+    '.mat-mdc-menu-panel button, .mat-mdc-menu-panel [role="menuitem"], .cdk-overlay-pane button'
+  );
+  for (const item of menuItems) {
+    const text = item.textContent?.trim() || "";
+    if (text.includes("Pro") && !text.includes("Ultra")) {
+      console.log("[Content] selecting Pro model:", text);
+      item.click();
+      await sleep(500);
+      return;
+    }
+  }
+
+  console.log("[Content] Pro option not found in menu, closing menu");
+  // 关闭菜单（按 Escape）
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+}
+
+// ========== 对话管理 ==========
+
+/**
+ * 删除当前对话：打开菜单 → 点击删除 → 确认
+ */
+async function deleteCurrentConversation(): Promise<void> {
+  console.log("[Content] deleting current conversation");
+
+  // 1. 点击对话操作菜单按钮
+  const menuBtn = document.querySelector<HTMLElement>(
+    '[data-test-id="actions-menu-button"]'
+  );
+  if (!menuBtn) {
+    console.log("[Content] actions menu button not found, skipping delete");
+    return;
+  }
+  menuBtn.click();
+  await sleep(500);
+
+  // 2. 点击删除按钮
+  const deleteBtn = document.querySelector<HTMLElement>(
+    '[data-test-id="delete-button"]'
+  );
+  if (!deleteBtn) {
+    console.log("[Content] delete button not found, closing menu");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    return;
+  }
+  deleteBtn.click();
+  await sleep(500);
+
+  // 3. 等待确认弹窗出现并点击确认
+  for (let i = 0; i < 6; i++) {
+    const confirmBtn = document.querySelector<HTMLElement>(
+      'button[data-test-id="confirm-button"]'
+    );
+    if (confirmBtn) {
+      console.log("[Content] clicking confirm button");
+      confirmBtn.click();
+      await sleep(500);
+      console.log("[Content] conversation deleted");
+      return;
+    }
+    await sleep(300);
+  }
+
+  console.log("[Content] confirm button not found after retries");
+}
+
+// ========== 核心消息处理 ==========
+
+/**
+ * 处理来自 Server 的发送消息指令
+ */
+async function handleSendMessage(wsMsg: WSMessage): Promise<void> {
+  const taskId = wsMsg.id || "";
+  const payload = wsMsg.payload as { prompt: string; conversation_id: string } | undefined;
+
+  if (!payload?.prompt) {
+    sendError(taskId, "no prompt in payload");
+    return;
+  }
+
+  overlay.setTaskStatus("processing", "准备中...");
+  console.log("[Content] sending prompt:", payload.prompt.substring(0, 50) + "...");
+
+  // 0. 如果没有 conversation_id，先创建新对话并选择 Pro 模型
+  if (!payload.conversation_id) {
+    overlay.setTaskStatus("processing", "创建新对话...");
+    await startNewConversation();
+    await ensureProModel();
+  }
+
+  overlay.setTaskStatus("processing", "发送中...");
+
+  // 1. 定位输入框
+  const inputEl = findInputElement();
+  if (!inputEl) {
+    overlay.setTaskStatus("error", "找不到输入框");
+    sendError(taskId, "cannot find input element");
+    return;
+  }
+
+  // 2. 模拟输入
+  simulateInput(inputEl, payload.prompt);
+
+  // 3. 等待发送按钮变为可用并点击（输入后按钮可能需要一些时间才会启用）
+  let sent = false;
+  for (let retry = 0; retry < 6; retry++) {
+    await sleep(500);
+    // 检查输入是否成功（输入框中是否有文本）
+    const hasText = inputEl.textContent && inputEl.textContent.trim().length > 0;
+    console.log(`[Content] retry ${retry}: hasText=${hasText}`);
+
+    if (findAndClickSendButton()) {
+      sent = true;
+      break;
+    }
+  }
+
+  if (!sent) {
+    // 尝试 Enter 键发送
+    console.log("[Content] send button not available after retries, trying Enter key");
+    inputEl.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        code: "Enter",
+        keyCode: 13,
+        bubbles: true,
+      })
+    );
+  }
+
+  overlay.setTaskStatus("processing", "等待回复...");
+
+  // 4. 等待并监听回复
+  await sleep(2000); // 等待 Gemini 开始生成
+  watchForReply(taskId);
+}
+
+/**
+ * 使用轮询方式监听回复（比 MutationObserver 更稳定）
+ */
+function watchForReply(taskId: string): void {
+  let lastText = "";
+  let stableCount = 0;
+  const STABLE_THRESHOLD = 3; // 文本连续 3 次不变 && 非生成中 => DONE
+  const POLL_INTERVAL = 1000; // 每秒检查
+  const MAX_WAIT = 120000; // 最长等待 2 分钟
+  const startTime = Date.now();
+
+  const pollTimer = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    if (elapsed > MAX_WAIT) {
+      clearInterval(pollTimer);
+      overlay.setTaskStatus("error", "超时");
+      sendError(taskId, "response timeout");
+      return;
+    }
+
+    const currentText = getLastModelResponse();
+    const generating = isGenerating();
+
+    if (currentText && currentText !== lastText) {
+      // 文本有变化，发送 PROCESSING
+      lastText = currentText;
+      stableCount = 0;
+      sendReply(taskId, currentText, "PROCESSING");
+      overlay.setTaskStatus("processing", `生成中 (${Math.floor(elapsed / 1000)}s)`);
+    } else if (currentText && !generating) {
+      // 文本没变且不在生成中
+      stableCount++;
+      if (stableCount >= STABLE_THRESHOLD) {
+        // 稳定了，发送 DONE
+        clearInterval(pollTimer);
+        sendReply(taskId, currentText, "DONE");
+        overlay.setTaskStatus("done");
+        // 回复完成后删除当前对话
+        deleteCurrentConversation().then(() => {
+          overlay.setTaskStatus("idle");
+        });
+      }
+    } else {
+      stableCount = 0;
+    }
+  }, POLL_INTERVAL);
+}
+
+// ========== 消息发送工具 ==========
+
+function sendReply(taskId: string, text: string, status: "PROCESSING" | "DONE"): void {
+  const conversationId = getConversationId();
+  chrome.runtime.sendMessage({
+    action: "wsReply",
+    data: {
+      reply_to: taskId,
+      type: "EVENT_REPLY",
+      payload: { text, status, conversation_id: conversationId },
+    },
+  });
+}
+
+function sendError(taskId: string, error: string): void {
+  chrome.runtime.sendMessage({
+    action: "wsReply",
+    data: {
+      reply_to: taskId,
+      type: "EVENT_ERROR",
+      payload: { error },
+    },
+  });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ========== 消息监听 ==========
+
 chrome.runtime.onMessage.addListener(
   (message: InternalMessage, _sender, sendResponse) => {
     if (message.action === "sendMessage") {
       const wsMsg = message.data as WSMessage;
       console.log("[Content] received command:", wsMsg.type, wsMsg.id);
-
-      // TODO: Step 4 实现 DOM 操作
-      // 1. 定位输入框
-      // 2. 模拟输入 prompt
-      // 3. 点击发送按钮
-      // 4. 监听回复 (MutationObserver)
-      // 5. 回传结果给 background
-
+      handleSendMessage(wsMsg);
       sendResponse({ received: true });
     }
     return true;

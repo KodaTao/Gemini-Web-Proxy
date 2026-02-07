@@ -145,6 +145,9 @@ func (h *Hub) readPump(client *Client) {
 		log.Println("[WS] extension disconnected")
 	}()
 
+	pongTimeout := time.Duration(h.cfg.PongTimeout) * time.Second
+	pingInterval := time.Duration(h.cfg.PingInterval) * time.Second
+
 	for {
 		_, data, err := client.conn.ReadMessage()
 		if err != nil {
@@ -159,6 +162,9 @@ func (h *Hub) readPump(client *Client) {
 			log.Printf("[WS] invalid message: %v", err)
 			continue
 		}
+
+		// 收到任何消息都刷新读超时（证明连接活跃）
+		client.conn.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
 
 		// PONG 消息不需要转发
 		if msg.Type == "PONG" || msg.Type == "EVENT_PONG" {
@@ -191,28 +197,15 @@ func (h *Hub) writePump(client *Client) {
 	}
 }
 
-// pingPump 定期发送心跳 PING
+// pingPump 定期发送应用层 PING 心跳
+// 插件端收到后回复应用层 PONG（JSON 文本），由 readPump 刷新读超时
 func (h *Hub) pingPump(client *Client) {
 	ticker := time.NewTicker(time.Duration(h.cfg.PingInterval) * time.Second)
 	defer ticker.Stop()
 
-	pongTimeout := time.Duration(h.cfg.PongTimeout) * time.Second
-	client.conn.SetPongHandler(func(string) error {
-		client.conn.SetReadDeadline(time.Now().Add(
-			time.Duration(h.cfg.PingInterval)*time.Second + pongTimeout,
-		))
-		return nil
-	})
-
-	// 设置初始读超时
-	client.conn.SetReadDeadline(time.Now().Add(
-		time.Duration(h.cfg.PingInterval)*time.Second + pongTimeout,
-	))
-
 	for {
 		<-ticker.C
 
-		// 发送应用层 PING 消息
 		pingMsg := &WSMessage{Type: "PING"}
 		data, _ := json.Marshal(pingMsg)
 

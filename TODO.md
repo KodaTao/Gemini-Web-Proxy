@@ -28,10 +28,21 @@
 
 ## Step 4: 实现 Content Script DOM 操作
 
-- [ ] 4.1 实现输入框定位逻辑 (优先 ARIA 属性，兼容多种 DOM 结构)
-- [ ] 4.2 实现模拟输入 (`execCommand('insertText')` + input 事件触发)
-- [ ] 4.3 实现发送按钮定位与点击
-- [ ] 4.4 实现 MutationObserver 监听回复：区分 PROCESSING 和 DONE 状态
-- [ ] 4.5 实现回复内容提取 (从 model-response 容器提取文本)
-- [ ] 4.6 实现多 Tab 管理 (只在一个 Gemini Tab 工作，选最近活动的)
-- [ ] 4.7 端到端手动测试：通过 API 发送消息 → 插件操作 Gemini → 返回回复
+- [x] 4.1 实现悬浮窗 (overlay.ts, Shadow DOM 隔离样式，连接/任务状态，可拖拽，可最小化)
+- [x] 4.2 实现输入框定位逻辑 (多种选择器 fallback)
+- [x] 4.3 实现模拟输入 (`execCommand('insertText')` + input 事件触发)
+- [x] 4.4 实现发送按钮定位与点击 (ARIA 属性 + fallback 按钮 + Enter 键)
+- [x] 4.5 实现轮询监听回复：区分 PROCESSING 和 DONE 状态 (稳定性检测)
+- [x] 4.6 实现回复内容提取 (model-response 容器 + 多种 fallback)
+- [x] 4.7 实现多 Tab 管理 (已在 background.ts 中完成)
+- [x] 4.8 构建并端到端手动测试：API → 插件操作 Gemini → 返回回复 ✅ 测试通过
+
+## Bug 修复 & 功能优化
+
+- [x] 修复 Quill 编辑器输入问题：多策略输入 (beforeinput → execCommand → paste → innerHTML)
+- [x] 修复误点击麦克风按钮：限定 fallback 只查找 .send-button 类
+- [x] 修复回复内容包含"显示思路"：优先从 .markdown 提取，排除 .model-thoughts 区域
+- [x] 修复 WebSocket 频繁断连：readPump 中收到消息时刷新 ReadDeadline
+- [x] 新对话支持：无 conversation_id 时模拟 Shift+Cmd+O 快捷键创建新对话
+- [x] 模型选择：新对话时自动检查并确保选择 Pro 模型
+- [x] 对话自动清理：回复完成后自动删除当前对话（菜单 → 删除 → 确认）
