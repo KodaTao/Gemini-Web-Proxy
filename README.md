@@ -19,6 +19,12 @@
 
 你可以直接用任何支持 OpenAI API 的工具（如 [Cursor](https://cursor.com)、[ChatBox](https://chatboxai.app/)、[Open WebUI](https://openwebui.com/) 等）来调用 Gemini，无需 API Key，利用浏览器已登录的 Session 即可。
 
+<p align="center">
+  <img src="./assets/demo.gif" alt="Gemini Web Proxy 演示" width="800">
+  <br>
+  <i>演示：在 ChatBox 中使用 Gemini Web Proxy 进行对话</i>
+</p>
+
 ## 特性
 
 - **OpenAI 兼容 API** — 支持 `POST /v1/chat/completions`，流式 (SSE) 和非流式响应
