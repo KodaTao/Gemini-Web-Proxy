@@ -24,22 +24,24 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to init database: %v", err)
 	}
-	_ = db // 后续 Step 3 使用
 	log.Println("database initialized")
 
-	// 初始化 WebSocket Hub
+	// 初始化 WebSocket Hub 和 TaskManager
 	hub := handler.NewHub(&cfg.WebSocket)
+	taskManager := handler.NewTaskManager()
+	taskManager.StartDispatcher(hub)
 
-	// 启动消息处理协程（后续 Step 3 会完善）
-	go func() {
-		for msg := range hub.IncomingMessages {
-			log.Printf("[Hub] received message: type=%s, reply_to=%s", msg.Type, msg.ReplyTo)
-		}
-	}()
+	// 初始化 ChatHandler
+	chatHandler := &handler.ChatHandler{
+		Hub:         hub,
+		TaskManager: taskManager,
+		DB:          db,
+	}
 
 	// 设置路由
 	r := gin.Default()
 	r.GET("/ws", hub.HandleWS)
+	r.POST("/v1/chat/completions", chatHandler.Handle)
 
 	// 启动服务
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)

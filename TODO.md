@@ -20,11 +20,11 @@
 
 ## Step 3: 实现 OpenAI 兼容 API
 
-- [ ] 3.1 实现 `POST /v1/chat/completions` 端点，解析 OpenAI 格式请求体
-- [ ] 3.2 实现非流式响应：等待插件返回 DONE 后一次性返回 OpenAI 格式 JSON
-- [ ] 3.3 实现 SSE 流式响应：将插件的 PROCESSING/DONE 事件实时转为 SSE chunk
-- [ ] 3.4 实现任务管理：请求 → 生成 UUID → 存 DB → 通过 WS 下发 → 等待回复 → 返回结果
-- [ ] 3.5 编写 API 接口测试 (模拟 WS 插件回复)
+- [x] 3.1 实现 `POST /v1/chat/completions` 端点，解析 OpenAI 格式请求体
+- [x] 3.2 实现非流式响应：等待插件返回 DONE 后一次性返回 OpenAI 格式 JSON
+- [x] 3.3 实现 SSE 流式响应：将插件的 PROCESSING/DONE 事件实时转为 SSE chunk（含差量计算）
+- [x] 3.4 实现任务管理 (TaskManager)：请求 → UUID → 存 DB → WS 下发 → channel 等待回复 → 返回
+- [x] 3.5 编写 API 接口测试 (16 tests all passed，含非流式、流式、无插件、无用户消息、任务分发)
 
 ## Step 4: 实现 Content Script DOM 操作
 
