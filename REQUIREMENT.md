@@ -215,9 +215,14 @@ GORM 模型：
 
 1. **DOM 选择器**: Google 的 Class Name 可能是动态混淆的。**策略**: 优先使用 ARIA 属性 (`aria-label`, `role="button"`) 或相对路径，避免硬编码随机类名。
 
-2. **React 输入框**: 直接修改 `.innerHTML` 不会生效。**策略**: 使用 `document.execCommand('insertText')` 或手动分发 `new Event('input', { bubbles: true })`。
+2. **React 输入框**: 直接修改 `.innerHTML` 不会生效。**策略**: 使用剪贴板粘贴（`navigator.clipboard.writeText` + 模拟 Cmd+V）方式输入文本，更自然也更可靠。
 
 3. **多 Tab 冲突**: 插件应强制只在一个 Gemini Tab 中工作。如果有多个，选取最近活动的一个。
+
+4. **反检测**: 模拟人类操作行为，降低被检测为自动化的风险：
+   * **输入方式**: 使用剪贴板粘贴代替直接 DOM 操作，符合人类复制粘贴的使用习惯。
+   * **完整事件链**: 所有点击操作模拟完整的鼠标事件序列 (mouseover → mousedown → mouseup → click)。
+   * **随机延时**: 操作间隔使用随机区间（如 300~800ms），避免固定间隔的机器特征。
 
 ---
 

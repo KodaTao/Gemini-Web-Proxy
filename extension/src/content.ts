@@ -52,11 +52,12 @@ function findInputElement(): HTMLElement | null {
 
 /**
  * 模拟输入文本到输入框
- * Gemini 使用 Quill 编辑器，execCommand('insertText') 可能无效
- * 采用多种策略依次尝试
+ * 使用剪贴板粘贴方式，最接近人类操作习惯
  */
-function simulateInput(inputEl: HTMLElement, text: string): void {
-  // 聚焦
+async function simulateInput(inputEl: HTMLElement, text: string): Promise<void> {
+  // 聚焦输入框（模拟点击聚焦）
+  simulateClick(inputEl);
+  await randomDelay(100, 300);
   inputEl.focus();
 
   // 清空现有内容
@@ -66,24 +67,42 @@ function simulateInput(inputEl: HTMLElement, text: string): void {
     selection.deleteFromDocument();
   }
 
-  // 策略1：使用 InputEvent 的 insertText（现代浏览器）
-  const inputEvent = new InputEvent("beforeinput", {
-    inputType: "insertText",
-    data: text,
-    bubbles: true,
-    cancelable: true,
-    composed: true,
-  });
-  const cancelled = !inputEl.dispatchEvent(inputEvent);
-
-  // 检查是否已成功输入（Quill 可能处理了 beforeinput）
-  if (!cancelled && inputEl.textContent?.includes(text)) {
-    console.log("[Content] input via beforeinput event succeeded");
-    inputEl.dispatchEvent(new InputEvent("input", { inputType: "insertText", data: text, bubbles: true }));
-    return;
+  // 策略1（首选）：写入系统剪贴板 + 模拟 Cmd+V 粘贴
+  try {
+    await navigator.clipboard.writeText(text);
+    // 模拟 Cmd+V / Ctrl+V 快捷键
+    const isMac = navigator.platform.toUpperCase().includes("MAC");
+    inputEl.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "v",
+        code: "KeyV",
+        keyCode: 86,
+        [isMac ? "metaKey" : "ctrlKey"]: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    // 同时触发 paste 事件（浏览器安全策略可能需要）
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", text);
+    inputEl.dispatchEvent(
+      new ClipboardEvent("paste", {
+        clipboardData: dataTransfer,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    await randomDelay(100, 200);
+    if (inputEl.textContent?.includes(text)) {
+      console.log("[Content] input via clipboard paste succeeded");
+      return;
+    }
+  } catch (e) {
+    console.log("[Content] clipboard paste failed:", e);
   }
 
   // 策略2：使用 execCommand（传统方式）
+  inputEl.focus();
   const execResult = document.execCommand("insertText", false, text);
   if (execResult && inputEl.textContent?.includes(text)) {
     console.log("[Content] input via execCommand succeeded");
@@ -91,33 +110,11 @@ function simulateInput(inputEl: HTMLElement, text: string): void {
     return;
   }
 
-  // 策略3：使用剪贴板粘贴模拟
-  try {
-    const dataTransfer = new DataTransfer();
-    dataTransfer.setData("text/plain", text);
-    const pasteEvent = new ClipboardEvent("paste", {
-      clipboardData: dataTransfer,
-      bubbles: true,
-      cancelable: true,
-    });
-    inputEl.dispatchEvent(pasteEvent);
-    if (inputEl.textContent?.includes(text)) {
-      console.log("[Content] input via paste event succeeded");
-      return;
-    }
-  } catch (e) {
-    console.log("[Content] paste simulation failed:", e);
-  }
-
-  // 策略4：直接操作 DOM（最后手段）
+  // 策略3：直接操作 DOM（最后手段）
   console.log("[Content] all input methods failed, using direct DOM manipulation");
-  // 对于 Quill 编辑器，需要创建 <p> 标签
   inputEl.innerHTML = `<p>${text}</p>`;
-  // 触发多种事件通知框架
   inputEl.dispatchEvent(new Event("input", { bubbles: true }));
   inputEl.dispatchEvent(new Event("change", { bubbles: true }));
-  // 触发 Quill 可能监听的 text-change 相关事件
-  inputEl.dispatchEvent(new CustomEvent("textchange", { bubbles: true }));
 }
 
 /**
@@ -141,7 +138,7 @@ function findAndClickSendButton(): boolean {
     const btn = document.querySelector<HTMLButtonElement>(selector);
     if (btn && btn.getAttribute("aria-disabled") !== "true") {
       console.log("[Content] clicking send button:", selector);
-      btn.click();
+      simulateClick(btn);
       return true;
     }
   }
@@ -153,7 +150,7 @@ function findAndClickSendButton(): boolean {
     const btn = container.querySelector<HTMLButtonElement>("button.send-button:not(.stop)");
     if (btn && btn.getAttribute("aria-disabled") !== "true") {
       console.log("[Content] clicking fallback send button");
-      btn.click();
+      simulateClick(btn);
       return true;
     }
   }
@@ -302,7 +299,7 @@ async function startNewConversation(): Promise<boolean> {
  */
 async function waitForNewPage(): Promise<void> {
   for (let i = 0; i < 20; i++) {
-    await sleep(500);
+    await randomDelay(400, 700);
     // 检查是否已加载完成：输入框存在 && 不在旧对话中
     const input = findInputElement();
     if (input && !isInExistingConversation()) {
@@ -350,8 +347,8 @@ async function ensureProModel(): Promise<void> {
     return;
   }
 
-  menuButton.click();
-  await sleep(500);
+  simulateClick(menuButton);
+  await randomDelay(400, 700);
 
   // 在下拉菜单中查找包含 "Pro" 的选项
   const menuItems = document.querySelectorAll<HTMLElement>(
@@ -361,8 +358,8 @@ async function ensureProModel(): Promise<void> {
     const text = item.textContent?.trim() || "";
     if (text.includes("Pro") && !text.includes("Ultra")) {
       console.log("[Content] selecting Pro model:", text);
-      item.click();
-      await sleep(500);
+      simulateClick(item);
+      await randomDelay(400, 700);
       return;
     }
   }
@@ -388,8 +385,8 @@ async function deleteCurrentConversation(): Promise<void> {
     console.log("[Content] actions menu button not found, skipping delete");
     return;
   }
-  menuBtn.click();
-  await sleep(500);
+  simulateClick(menuBtn);
+  await randomDelay(400, 700);
 
   // 2. 点击删除按钮
   const deleteBtn = document.querySelector<HTMLElement>(
@@ -400,8 +397,8 @@ async function deleteCurrentConversation(): Promise<void> {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     return;
   }
-  deleteBtn.click();
-  await sleep(500);
+  simulateClick(deleteBtn);
+  await randomDelay(400, 700);
 
   // 3. 等待确认弹窗出现并点击确认
   for (let i = 0; i < 6; i++) {
@@ -410,12 +407,12 @@ async function deleteCurrentConversation(): Promise<void> {
     );
     if (confirmBtn) {
       console.log("[Content] clicking confirm button");
-      confirmBtn.click();
-      await sleep(500);
+      simulateClick(confirmBtn);
+      await randomDelay(300, 600);
       console.log("[Content] conversation deleted");
       return;
     }
-    await sleep(300);
+    await randomDelay(200, 400);
   }
 
   console.log("[Content] confirm button not found after retries");
@@ -461,7 +458,7 @@ async function handleSendMessage(wsMsg: WSMessage): Promise<void> {
   // 3. 等待发送按钮变为可用并点击（输入后按钮可能需要一些时间才会启用）
   let sent = false;
   for (let retry = 0; retry < 6; retry++) {
-    await sleep(500);
+    await randomDelay(400, 800);
     // 检查输入是否成功（输入框中是否有文本）
     const hasText = inputEl.textContent && inputEl.textContent.trim().length > 0;
     console.log(`[Content] retry ${retry}: hasText=${hasText}`);
@@ -488,7 +485,7 @@ async function handleSendMessage(wsMsg: WSMessage): Promise<void> {
   overlay.setTaskStatus("processing", "等待回复...");
 
   // 4. 等待并监听回复
-  await sleep(2000); // 等待 Gemini 开始生成
+  await randomDelay(1500, 2500); // 等待 Gemini 开始生成
   watchForReply(taskId);
 }
 
@@ -567,6 +564,37 @@ function sendError(taskId: string, error: string): void {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 随机延时，模拟人类操作间隔
+ */
+function randomDelay(min: number, max: number): Promise<void> {
+  const ms = Math.floor(Math.random() * (max - min + 1)) + min;
+  return sleep(ms);
+}
+
+/**
+ * 模拟完整的鼠标点击事件链：mouseover → mousedown → mouseup → click
+ * 比直接调用 .click() 更接近真实用户行为
+ */
+function simulateClick(el: HTMLElement): void {
+  const rect = el.getBoundingClientRect();
+  const x = rect.left + rect.width / 2;
+  const y = rect.top + rect.height / 2;
+
+  const commonInit: MouseEventInit = {
+    bubbles: true,
+    cancelable: true,
+    view: window,
+    clientX: x,
+    clientY: y,
+  };
+
+  el.dispatchEvent(new MouseEvent("mouseover", commonInit));
+  el.dispatchEvent(new MouseEvent("mousedown", { ...commonInit, button: 0 }));
+  el.dispatchEvent(new MouseEvent("mouseup", { ...commonInit, button: 0 }));
+  el.dispatchEvent(new MouseEvent("click", { ...commonInit, button: 0 }));
 }
 
 // ========== 消息监听 ==========
