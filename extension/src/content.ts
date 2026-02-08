@@ -425,6 +425,45 @@ async function deleteCurrentConversation(): Promise<void> {
   console.log("[Content] confirm button not found after retries");
 }
 
+/**
+ * 点击最后一个 model 回复的复制按钮，从剪贴板获取 Markdown 格式内容
+ */
+async function clickCopyAndGetMarkdown(): Promise<string | null> {
+  // 找到最后一个 model-response 中的复制按钮
+  const modelResponses = document.querySelectorAll<HTMLElement>("model-response");
+  if (modelResponses.length === 0) {
+    console.log("[Content] no model-response found for copy");
+    return null;
+  }
+  const lastResponse = modelResponses[modelResponses.length - 1];
+
+  // 在最后一个回复中找复制按钮
+  const copyBtn = lastResponse.querySelector<HTMLElement>(
+    'copy-button button[data-test-id="copy-button"], copy-button button[aria-label="复制"], copy-button button[aria-label="Copy"]'
+  );
+  if (!copyBtn) {
+    console.log("[Content] copy button not found in last model-response");
+    return null;
+  }
+
+  console.log("[Content] clicking copy button to get markdown content");
+  simulateClick(copyBtn);
+  await randomDelay(300, 600);
+
+  // 从剪贴板读取内容
+  try {
+    const markdown = await navigator.clipboard.readText();
+    if (markdown && markdown.trim().length > 0) {
+      console.log("[Content] got markdown from clipboard, length:", markdown.length);
+      return markdown.trim();
+    }
+  } catch (e) {
+    console.log("[Content] failed to read clipboard:", e);
+  }
+
+  return null;
+}
+
 // ========== 核心消息处理 ==========
 
 /**
@@ -533,15 +572,22 @@ function watchForReply(taskId: string): void {
       // 文本没变且不在生成中
       stableCount++;
       if (stableCount >= STABLE_THRESHOLD) {
-        // 稳定了，发送 DONE
+        // 稳定了，先点击复制按钮获取 Markdown 内容，再发送 DONE
         clearInterval(pollTimer);
-        sendReply(taskId, currentText, "DONE");
-        overlay.setTaskStatus("done");
-        // 回复完成后删除当前对话，完成后上报空闲
-        deleteCurrentConversation().then(() => {
+        overlay.setTaskStatus("processing", "复制内容...");
+        clickCopyAndGetMarkdown().then(async (markdown) => {
+          const finalText = markdown || currentText;
+          // 先删除对话，再发送 DONE
+          overlay.setTaskStatus("processing", "删除对话...");
+          await deleteCurrentConversation();
+          sendReply(taskId, finalText, "DONE");
           overlay.setTaskStatus("idle");
           sendStatus("idle");
-        }).catch(() => {
+        }).catch(async () => {
+          // 即使复制失败也用 DOM 提取的文本兜底
+          overlay.setTaskStatus("processing", "删除对话...");
+          await deleteCurrentConversation().catch(() => {});
+          sendReply(taskId, currentText, "DONE");
           overlay.setTaskStatus("idle");
           sendStatus("idle");
         });

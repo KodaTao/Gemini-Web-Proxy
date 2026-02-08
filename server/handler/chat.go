@@ -326,36 +326,40 @@ func (h *ChatHandler) handleStream(c *gin.Context, taskID, modelName string, rep
 				return
 			}
 
-			// 计算差量
-			delta := ""
-			if strings.HasPrefix(payload.Text, prevText) {
-				delta = payload.Text[len(prevText):]
-			} else {
-				// 全量替换（不应发生，兜底处理）
-				delta = payload.Text
-			}
-			prevText = payload.Text
-
-			if delta != "" {
-				chunk := ChatResponse{
-					ID:      taskID,
-					Object:  "chat.completion.chunk",
-					Created: time.Now().Unix(),
-					Model:   modelName,
-					Choices: []Choice{
-						{
-							Index: 0,
-							Delta: &ChatMessage{
-								Content: delta,
-							},
-							FinishReason: nil,
-						},
-					},
+			// PROCESSING：计算差量并推送增量 chunk
+			if payload.Status == "PROCESSING" {
+				delta := ""
+				if strings.HasPrefix(payload.Text, prevText) {
+					delta = payload.Text[len(prevText):]
+				} else {
+					delta = payload.Text
 				}
-				writeSSE(c.Writer, flusher, chunk)
+				prevText = payload.Text
+
+				if delta != "" {
+					chunk := ChatResponse{
+						ID:      taskID,
+						Object:  "chat.completion.chunk",
+						Created: time.Now().Unix(),
+						Model:   modelName,
+						Choices: []Choice{
+							{
+								Index: 0,
+								Delta: &ChatMessage{
+									Content: delta,
+								},
+								FinishReason: nil,
+							},
+						},
+					}
+					writeSSE(c.Writer, flusher, chunk)
+				}
+				continue
 			}
 
 			if payload.Status == "DONE" {
+				// DONE 的 text 是 Markdown 格式（通过复制按钮获取），与之前 PROCESSING 的纯文本不同
+				// 不再追加 delta，直接发 finish chunk，避免内容重复
 				// 更新数据库
 				h.DB.Model(msg).Update("status", "received")
 				h.DB.Create(&model.Message{
