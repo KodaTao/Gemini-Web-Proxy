@@ -49,6 +49,9 @@
 - [x] SSE 流式响应格式修复：ChatMessage 添加 omitempty 符合 OpenAI 规范
 - [x] 多角色消息支持：messages 序列化为 XML 格式（chat_history + CDATA），支持 system/user/assistant 完整对话上下文
 - [x] 修复 XML 内容粘贴失败：粘贴成功判断改为检查内容长度，策略3 innerHTML 转义 HTML 特殊字符
+- [x] Markdown 内容获取：回复完成后点击复制按钮从剪贴板获取 Markdown 格式内容，替代 DOM 纯文本提取
+- [x] 流式防重复：Server 端 PROCESSING 推增量 chunk，DONE 跳过 content delta 只发 finish，避免内容重复
+- [x] 流程优化：复制内容 → 删除对话 → 发送 DONE → 上报 idle
 
 ## 并发控制 & 插件状态同步
 

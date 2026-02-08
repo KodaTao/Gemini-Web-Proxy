@@ -226,14 +226,14 @@ GORM 模型：
    * **判断生成状态**: 检测"Stop responding"按钮（正在生成）或"Regenerate"图标（生成结束）。
    * **提取内容**: 获取最后一个 `model-response` 容器的文本/HTML。
 2. **Extension** 将提取的内容通过 WS 发回 Server (`EVENT_REPLY`)。
-   * `status: "PROCESSING"` — 生成中，附带当前已生成的文本。
-   * `status: "DONE"` — 生成完成，附带完整文本。
+   * `status: "PROCESSING"` — 生成中，附带当前已生成的纯文本（DOM 提取）。
+   * `status: "DONE"` — 生成完成，附带 **Markdown 格式**的完整文本（通过复制按钮获取）。
    * 回复内容提取时过滤思考过程区域 (`.model-thoughts`)，优先从 `.markdown` 元素获取纯文本。
-   * **回复完成后自动删除当前对话**：打开对话菜单 → 点击删除 → 确认删除弹窗。
+   * **回复完成后的流程**：点击复制按钮获取 Markdown → 删除当前对话 → 发送 DONE → 上报 idle。
 3. **Server** 收到回复后：
-   * 如果请求是流式 (`stream: true`)：将 PROCESSING 和 DONE 事件实时转换为 SSE chunk 推送给客户端。
-   * 如果请求是非流式 (`stream: false`)：等待 DONE 状态后，一次性返回完整响应。
-   * 更新 DB 中的消息内容和状态。
+   * 如果请求是流式 (`stream: true`)：PROCESSING 事件计算差量推送 SSE chunk（纯文本），DONE 时不追加内容 delta（避免与 Markdown 文本重复），只发 finish chunk。
+   * 如果请求是非流式 (`stream: false`)：等待 DONE 状态后，一次性返回 Markdown 格式的完整响应。
+   * 更新 DB 中的消息内容和状态（数据库存储 Markdown 格式）。
 
 ---
 
