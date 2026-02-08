@@ -1,5 +1,8 @@
-import type { InternalMessage, WSMessage } from "./types";
-import { Overlay } from "./overlay";
+import type {InternalMessage, WSMessage} from "./types";
+import {Overlay} from "./overlay";
+import * as cheerio from 'cheerio';
+import TurndownService from 'turndown';
+import {gfm} from 'turndown-plugin-gfm';
 
 console.log("[Content] Gemini Web Proxy content script loaded");
 
@@ -208,7 +211,7 @@ function extractTextWithoutThinking(el: HTMLElement): string {
 /**
  * 获取最后一个 model 回复的文本内容
  */
-function getLastModelResponse(): string {
+function getLastModelResponse(): Array<string> {
   // 获取所有 model 回复，取最后一个
   const modelSelectors = [
     'model-response',
@@ -220,26 +223,27 @@ function getLastModelResponse(): string {
     const allResponses = document.querySelectorAll<HTMLElement>(selector);
     if (allResponses.length > 0) {
       const last = allResponses[allResponses.length - 1];
+      const h = last.innerHTML;
       // 优先从 .markdown 获取纯回复文本（不含思考过程）
       // Gemini DOM: model-response > response-container > model-response-text > message-content > .markdown
       const markdownEl = last.querySelector<HTMLElement>(".markdown");
       if (markdownEl) {
         const text = markdownEl.innerText.trim();
-        if (text) return text;
+        if (text&&h) return [text,h];
       }
       // 备选：从 message-content 获取
       const msgContent = last.querySelector<HTMLElement>("message-content");
       if (msgContent) {
         const text = msgContent.innerText.trim();
-        if (text) return text;
+        if (text&&h) return [text, h];
       }
       // 最后手段：从整个元素提取，排除思考区域
       const text = extractTextWithoutThinking(last);
-      if (text) return text;
+      if (text&&h) return [text, h];
     }
   }
 
-  return "";
+  return ["", ""];
 }
 
 /**
@@ -493,93 +497,105 @@ async function readClipboardText(): Promise<string | null> {
   return null;
 }
 
-async function clickCopyAndGetMarkdown(): Promise<string | null> {
-  // 找到最后一个 model-response 中的复制按钮
-  const modelResponses = document.querySelectorAll<HTMLElement>("model-response");
-  if (modelResponses.length === 0) {
-    console.log("[Content] no model-response found for copy");
-    return null;
-  }
-  const lastResponse = modelResponses[modelResponses.length - 1];
+async function clickCopyAndGetMarkdown(htmlContent: string): Promise<string | null> {
+    try {
+        // 1. 加载 HTML
+        const $ = cheerio.load(htmlContent);
 
-  const COPY_BTN_SELECTOR =
-    'copy-button button[data-test-id="copy-button"], copy-button button[aria-label="复制"], copy-button button[aria-label="Copy"]';
+        // 2. 定位核心内容区域
+        const targetContainer = $('.markdown-main-panel');
+        if (targetContainer.length === 0) {
+            return null;
+        }
 
-  // 等待复制按钮出现（最多等 10 秒）
-  let copyBtn: HTMLElement | null = null;
-  const waitStart = Date.now();
-  const WAIT_TIMEOUT = 10000;
-  while (Date.now() - waitStart < WAIT_TIMEOUT) {
-    copyBtn = lastResponse.querySelector<HTMLElement>(COPY_BTN_SELECTOR);
-    if (copyBtn) break;
-    console.log("[Content] waiting for copy button to appear...");
-    await new Promise((r) => setTimeout(r, 500));
-  }
+        // --- 3. DOM 清洗与预处理 ---
 
-  if (!copyBtn) {
-    console.log("[Content] copy button not found after waiting 10s");
-    return null;
-  }
-  console.log("[Content] copy button found, waited", Date.now() - waitStart, "ms");
+        // 3.1 移除不需要的 UI 元素
+        targetContainer.find('.table-footer').remove();
+        targetContainer.find('button').remove();
+        targetContainer.find('mat-icon').remove();
+        targetContainer.find('.message-actions').remove();
+        targetContainer.find('model-thoughts').remove();
 
-  // 多种点击策略，轮换使用
-  const clickStrategies: Array<(el: HTMLElement) => void> = [
-    // 策略1：原生 .click()（最接近真实用户点击）
-    (el) => {
-      el.focus();
-      el.click();
-    },
-    // 策略2：PointerEvent + click 完整事件链
-    (el) => {
-      const rect = el.getBoundingClientRect();
-      const x = rect.left + rect.width / 2;
-      const y = rect.top + rect.height / 2;
-      const opts: PointerEventInit = { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerType: "mouse" };
-      el.dispatchEvent(new PointerEvent("pointerdown", opts));
-      el.dispatchEvent(new PointerEvent("pointerup", opts));
-      el.click();
-    },
-    // 策略3：simulateClick（完整鼠标事件链）
-    (el) => {
-      simulateClick(el);
-    },
-  ];
+        // 3.2 【关键修改】预处理表格单元格，将块级元素改为行内元素 + <br>
+        // 这一步是为了防止 Turndown 自动把 <p> 转成 \n\n
+        targetContainer.find('td, th').each((_, cell) => {
+            const $cell = $(cell);
 
-  // 最多重试，每次切换点击策略
-  const MAX_RETRIES = 3;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const strategy = clickStrategies[(attempt - 1) % clickStrategies.length];
-    console.log(`[Content] clicking copy button (attempt ${attempt}/${MAX_RETRIES}, strategy ${((attempt - 1) % clickStrategies.length) + 1})`);
-    strategy(copyBtn);
+            // 找到单元格内的所有段落 <p> 和 <div>
+            // 比如 <td><p>Line 1</p><p>Line 2</p></td>
+            $cell.find('p, div, li').each((_, block) => {
+                const $block = $(block);
+                // 将其替换为：内容 + <br>
+                // 结果变成：<td>Line 1<br>Line 2<br></td>
+                $block.replaceWith($block.html() + '<br>');
+            });
 
-    // 等待 snackbar 弹窗确认复制成功
-    const copied = await waitForCopySnackbar(2000);
-    if (copied) {
-      console.log(`[Content] copy confirmed by snackbar on attempt ${attempt}`);
-      const markdown = await readClipboardText();
-      if (markdown) {
-        console.log("[Content] got markdown from clipboard, length:", markdown.length);
+            // (可选) 如果不需要每个单元格最后都有个 <br>，可以清理一下结尾
+            // 但通常保留也无伤大雅，Markdown渲染器会忽略末尾的 <br>
+        });
+
+        // 4. 获取清洗后的 HTML
+        const cleanHtml = targetContainer.html() || '';
+
+        // 5. 配置 Turndown
+        const turndownService = new TurndownService({
+            headingStyle: 'atx',
+            hr: '---',
+            bulletListMarker: '-',
+            codeBlockStyle: 'fenced',
+        });
+
+        // 6. 启用 GFM 插件 (必须用于支持表格)
+        turndownService.use(gfm);
+
+        // 7. 【关键修改】添加自定义规则：表格内的 <br> 禁止转为 \n
+        turndownService.addRule('keep-br-in-tables', {
+            filter: 'br',
+            replacement: function (_content, node) {
+                // 向上查找，判断当前 <br> 是否在表格内
+                let parent = node.parentNode;
+                let isInsideTable = false;
+
+                while (parent) {
+                    // 如果找到了 TD 或 TH，说明在表格里
+                    if (parent.nodeName === 'TD' || parent.nodeName === 'TH') {
+                        isInsideTable = true;
+                        break;
+                    }
+                    // 如果找到了 BODY 或 TABLE 还没找到单元格，就停止
+                    if (parent.nodeName === 'TABLE' || parent.nodeName === 'BODY') {
+                        break;
+                    }
+                    parent = parent.parentNode;
+                }
+
+                if (isInsideTable) {
+                    // 如果在表格里，输出 HTML 的 <br> 标签字符串
+                    // 这样 Markdown 解析器会认为它是单元格内的换行，而不是表格行的结束
+                    return '<br>';
+                }
+
+                // 如果不在表格里，返回标准的 Markdown 换行符
+                return '\n';
+            }
+        });
+
+        // 8. 执行转换
+        const markdown = turndownService.turndown(cleanHtml);
+
+        // 9. (兜底) 最后再做一次正则替换，防止漏网之鱼
+        // 有时候 GFM 插件内部处理可能会产生漏网的 \n，我们在字符串层面做最后一次清洗
+        // 匹配表格行（以 | 开头和结尾的行），如果中间有 \n 则替换为空格或 <br>，
+        // 但正则处理 Markdown 表格非常复杂，通常上面的 Step 7 已经足够解决问题。
+
         return markdown;
-      }
-      console.log("[Content] snackbar appeared but clipboard read failed");
-      return null;
+
+    } catch (error) {
+        console.error('转换 Markdown 失败:', error);
+        return null;
     }
-
-    console.log(`[Content] copy snackbar not detected on attempt ${attempt}, retrying...`);
-    await randomDelay(500, 1000);
-  }
-
-  // 所有重试都失败，最后尝试一次读取剪贴板
-  console.log("[Content] all copy attempts failed to show snackbar, trying clipboard anyway");
-  const markdown = await readClipboardText();
-  if (markdown) {
-    console.log("[Content] got markdown from clipboard (without snackbar confirmation), length:", markdown.length);
-    return markdown;
-  }
-
-  return null;
 }
-
 // ========== 核心消息处理 ==========
 
 /**
@@ -675,7 +691,9 @@ function watchForReply(taskId: string): void {
       return;
     }
 
-    const currentText = getLastModelResponse();
+    const currentTextAndHtml = getLastModelResponse();
+    const currentText = currentTextAndHtml[0];
+    const currentHtml = currentTextAndHtml[1];
     const generating = isGenerating();
 
     if (currentText && currentText !== lastText) {
@@ -691,7 +709,7 @@ function watchForReply(taskId: string): void {
         // 稳定了，先点击复制按钮获取 Markdown 内容，再发送 DONE
         clearInterval(pollTimer);
         overlay.setTaskStatus("processing", "复制内容...");
-        clickCopyAndGetMarkdown().then(async (markdown) => {
+        clickCopyAndGetMarkdown(currentHtml).then(async (markdown) => {
           const finalText = markdown || currentText;
           // 先删除对话，再发送 DONE
           overlay.setTaskStatus("processing", "删除对话...");

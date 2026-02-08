@@ -4,12 +4,18 @@
   "private": true,
   "scripts": {
     "build": "vite build",
-    "build:safari": "bash ../scripts/build-safari.sh",
     "watch": "vite build --watch"
   },
   "devDependencies": {
+    "@types/cheerio": "^0.22.35",
+    "@types/turndown": "^5.0.6",
     "chrome-types": "^0.1.415",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "turndown": "^7.2.2",
+    "turndown-plugin-gfm": "^1.0.2"
   }
 }
