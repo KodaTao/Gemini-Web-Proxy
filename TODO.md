@@ -52,6 +52,7 @@
 - [x] Markdown 内容获取：回复完成后点击复制按钮从剪贴板获取 Markdown 格式内容，替代 DOM 纯文本提取
 - [x] 流式防重复：Server 端 PROCESSING 推增量 chunk，DONE 跳过 content delta 只发 finish，避免内容重复
 - [x] 流程优化：复制内容 → 删除对话 → 发送 DONE → 上报 idle
+- [x] 悬浮窗设置面板：在 overlay 中新增设置按钮，点击展开 WS 地址配置面板，支持保存并触发重连
 
 ## 并发控制 & 插件状态同步
 

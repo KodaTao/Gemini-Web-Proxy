@@ -62,7 +62,7 @@ api_key: ""                 # API Key，为空则不验证
 * **核心模块**:
   * `background.ts`: Service Worker，负责 WS 连接保活、心跳、任务分发。从 storage 读取 WS 地址，配置变更时自动重连。
   * `content.ts`: 注入 `gemini.google.com`，负责 DOM 操作 (输入 prompt) 和 MutationObserver (监听回复)。同时在页面右下角注入悬浮窗，实时显示 WS 连接状态和当前任务状态。
-  * `overlay.ts`: 悬浮窗模块，使用 Shadow DOM 隔离样式，支持拖拽移动，显示连接状态（绿/红点）和任务状态（空闲/处理中/完成）。
+  * `overlay.ts`: 悬浮窗模块，使用 Shadow DOM 隔离样式，支持拖拽移动，显示连接状态（绿/红点）和任务状态（空闲/处理中/完成）。内嵌设置面板，点击⚙按钮可展开配置 WebSocket 地址，保存后自动触发重连。
   * `popup.html/ts/css`: 插件配置页面，可配置 WebSocket 地址（默认 `ws://localhost:8080/ws`），使用 `chrome.storage.local` 持久化。
 
 ---
