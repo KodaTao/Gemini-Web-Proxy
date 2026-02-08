@@ -428,6 +428,71 @@ async function deleteCurrentConversation(): Promise<void> {
 /**
  * 点击最后一个 model 回复的复制按钮，从剪贴板获取 Markdown 格式内容
  */
+/**
+ * 检测"已复制到剪贴板"snackbar 弹窗是否出现
+ */
+function detectCopySnackbar(): boolean {
+  const snackbar = document.querySelector("simple-snack-bar .mat-mdc-snack-bar-label");
+  if (snackbar) {
+    const text = snackbar.textContent?.trim() || "";
+    if (text.includes("已复制到剪贴板") || text.toLowerCase().includes("copied to clipboard")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 等待复制成功的 snackbar 弹窗出现
+ * @returns true 如果检测到弹窗，false 超时
+ */
+async function waitForCopySnackbar(timeoutMs = 2000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (detectCopySnackbar()) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
+
+/**
+ * 从剪贴板读取内容（支持 Clipboard API 和 Safari fallback）
+ */
+async function readClipboardText(): Promise<string | null> {
+  // 方式1：使用 Clipboard API 读取（Chrome 推荐）
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text && text.trim().length > 0) {
+      return text.trim();
+    }
+  } catch (e) {
+    console.log("[Content] Clipboard API readText failed (may be Safari restriction):", e);
+  }
+
+  // 方式2：Safari fallback — 通过隐藏 textarea + execCommand('paste') 读取剪贴板
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "-9999px";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    const pasteResult = document.execCommand("paste");
+    const pastedText = textarea.value;
+    document.body.removeChild(textarea);
+    if (pasteResult && pastedText && pastedText.trim().length > 0) {
+      return pastedText.trim();
+    }
+  } catch (e) {
+    console.log("[Content] execCommand paste fallback also failed:", e);
+  }
+
+  return null;
+}
+
 async function clickCopyAndGetMarkdown(): Promise<string | null> {
   // 找到最后一个 model-response 中的复制按钮
   const modelResponses = document.querySelectorAll<HTMLElement>("model-response");
@@ -437,28 +502,79 @@ async function clickCopyAndGetMarkdown(): Promise<string | null> {
   }
   const lastResponse = modelResponses[modelResponses.length - 1];
 
-  // 在最后一个回复中找复制按钮
-  const copyBtn = lastResponse.querySelector<HTMLElement>(
-    'copy-button button[data-test-id="copy-button"], copy-button button[aria-label="复制"], copy-button button[aria-label="Copy"]'
-  );
-  if (!copyBtn) {
-    console.log("[Content] copy button not found in last model-response");
-    return null;
+  const COPY_BTN_SELECTOR =
+    'copy-button button[data-test-id="copy-button"], copy-button button[aria-label="复制"], copy-button button[aria-label="Copy"]';
+
+  // 等待复制按钮出现（最多等 10 秒）
+  let copyBtn: HTMLElement | null = null;
+  const waitStart = Date.now();
+  const WAIT_TIMEOUT = 10000;
+  while (Date.now() - waitStart < WAIT_TIMEOUT) {
+    copyBtn = lastResponse.querySelector<HTMLElement>(COPY_BTN_SELECTOR);
+    if (copyBtn) break;
+    console.log("[Content] waiting for copy button to appear...");
+    await new Promise((r) => setTimeout(r, 500));
   }
 
-  console.log("[Content] clicking copy button to get markdown content");
-  simulateClick(copyBtn);
-  await randomDelay(300, 600);
+  if (!copyBtn) {
+    console.log("[Content] copy button not found after waiting 10s");
+    return null;
+  }
+  console.log("[Content] copy button found, waited", Date.now() - waitStart, "ms");
 
-  // 从剪贴板读取内容
-  try {
-    const markdown = await navigator.clipboard.readText();
-    if (markdown && markdown.trim().length > 0) {
-      console.log("[Content] got markdown from clipboard, length:", markdown.length);
-      return markdown.trim();
+  // 多种点击策略，轮换使用
+  const clickStrategies: Array<(el: HTMLElement) => void> = [
+    // 策略1：原生 .click()（最接近真实用户点击）
+    (el) => {
+      el.focus();
+      el.click();
+    },
+    // 策略2：PointerEvent + click 完整事件链
+    (el) => {
+      const rect = el.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const opts: PointerEventInit = { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerType: "mouse" };
+      el.dispatchEvent(new PointerEvent("pointerdown", opts));
+      el.dispatchEvent(new PointerEvent("pointerup", opts));
+      el.click();
+    },
+    // 策略3：simulateClick（完整鼠标事件链）
+    (el) => {
+      simulateClick(el);
+    },
+  ];
+
+  // 最多重试，每次切换点击策略
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const strategy = clickStrategies[(attempt - 1) % clickStrategies.length];
+    console.log(`[Content] clicking copy button (attempt ${attempt}/${MAX_RETRIES}, strategy ${((attempt - 1) % clickStrategies.length) + 1})`);
+    strategy(copyBtn);
+
+    // 等待 snackbar 弹窗确认复制成功
+    const copied = await waitForCopySnackbar(2000);
+    if (copied) {
+      console.log(`[Content] copy confirmed by snackbar on attempt ${attempt}`);
+      const markdown = await readClipboardText();
+      if (markdown) {
+        console.log("[Content] got markdown from clipboard, length:", markdown.length);
+        return markdown;
+      }
+      console.log("[Content] snackbar appeared but clipboard read failed");
+      return null;
     }
-  } catch (e) {
-    console.log("[Content] failed to read clipboard:", e);
+
+    console.log(`[Content] copy snackbar not detected on attempt ${attempt}, retrying...`);
+    await randomDelay(500, 1000);
+  }
+
+  // 所有重试都失败，最后尝试一次读取剪贴板
+  console.log("[Content] all copy attempts failed to show snackbar, trying clipboard anyway");
+  const markdown = await readClipboardText();
+  if (markdown) {
+    console.log("[Content] got markdown from clipboard (without snackbar confirmation), length:", markdown.length);
+    return markdown;
   }
 
   return null;

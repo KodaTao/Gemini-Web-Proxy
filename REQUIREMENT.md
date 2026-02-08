@@ -10,7 +10,7 @@
 系统由两部分组成，通过 **WebSocket** 进行双向通讯：
 
 1. **Server (服务端)**: Golang 本地服务器。负责提供 OpenAI 兼容 REST API、管理数据 (SQLite)、维持与插件的 WS 连接。
-2. **Extension (插件端)**: Chrome 浏览器插件 (Manifest V3)。负责在后台维持连接、注入脚本到 Gemini 页面、模拟用户操作 (输入/点击)、监听并回传 DOM 变化。
+2. **Extension (插件端)**: 浏览器插件 (Manifest V3)，同时支持 **Chrome** 和 **Safari**。负责在后台维持连接、注入脚本到 Gemini 页面、模拟用户操作 (输入/点击)、监听并回传 DOM 变化。
 
 ---
 
@@ -58,12 +58,32 @@ api_key: ""                 # API Key，为空则不验证
 * **规范**: Manifest V3
 * **语言**: TypeScript
 * **构建工具**: Vite (library 模式分别打包各入口文件)
-* **配置存储**: `chrome.storage.local`
+* **配置存储**: `chrome.storage.local`（Safari 中同样支持 `chrome.*` 命名空间）
+* **浏览器支持**:
+  * **Chrome**: 直接加载 `extension/dist` 目录
+  * **Safari** (macOS): 通过 `xcrun safari-web-extension-converter` 转换为 Xcode 项目，使用开发者模式加载（无需 Apple Developer 账号和签名）
 * **核心模块**:
   * `background.ts`: Service Worker，负责 WS 连接保活、心跳、任务分发。从 storage 读取 WS 地址，配置变更时自动重连。
   * `content.ts`: 注入 `gemini.google.com`，负责 DOM 操作 (输入 prompt) 和 MutationObserver (监听回复)。同时在页面右下角注入悬浮窗，实时显示 WS 连接状态和当前任务状态。
   * `overlay.ts`: 悬浮窗模块，使用 Shadow DOM 隔离样式，支持拖拽移动，显示连接状态（绿/红点）和任务状态（空闲/处理中/完成）。内嵌设置面板，点击⚙按钮可展开配置 WebSocket 地址，保存后自动触发重连。
   * `popup.html/ts/css`: 插件配置页面，可配置 WebSocket 地址（默认 `ws://localhost:8080/ws`），使用 `chrome.storage.local` 持久化。
+
+### 2.4 Safari Web Extension 支持
+
+* **系统要求**: macOS 14.0+ 配合 Safari 17+，或 macOS 12.0+ 配合 Safari 16.4+（需支持 Service Worker Background）
+* **开发工具**: Xcode 15+（用于转换和构建，但不需要 Apple Developer 账号）
+* **构建方式**:
+  1. 先执行 `npm run build` 构建 Chrome 扩展到 `dist/`
+  2. 执行 `npm run build:safari` 调用 `xcrun safari-web-extension-converter` 将 `dist/` 转换为 Xcode 项目
+  3. 在 Xcode 中构建并运行，或通过命令行 `xcodebuild` 构建
+* **运行方式**（无需签名）:
+  1. Safari → 设置 → 高级 → 勾选"在菜单栏中显示开发菜单"
+  2. 开发 → 勾选"允许未签名的扩展"
+  3. Safari → 设置 → 扩展 → 启用 Gemini Web Proxy
+* **兼容性说明**:
+  * Safari Web Extension 支持 `chrome.*` 命名空间，插件源码无需为 Safari 做特殊修改
+  * `navigator.clipboard.readText()` 在 Safari 中需要用户授予剪贴板权限，已有 fallback 处理
+  * 快捷键 `metaKey` (Cmd) 在 macOS Safari 中与 Chrome 行为一致
 
 ---
 

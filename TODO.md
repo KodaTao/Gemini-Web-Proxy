@@ -76,3 +76,10 @@
 - [x] 5.2 完整鼠标事件链：所有点击操作增加 mouseover → mousedown → mouseup → click 事件序列
 - [x] 5.3 随机化操作延时：所有 sleep 改为随机区间（如 300~800ms），消除固定间隔的机器特征
 - [x] 5.4 构建并测试 ✅ 测试通过
+
+## Safari Web Extension 兼容
+
+- [x] 8.1 创建 `scripts/build-safari.sh` 构建脚本：调用 xcrun safari-web-extension-converter 转换 dist/ 为 Xcode 项目
+- [x] 8.2 在 package.json 中添加 `build:safari` npm 脚本
+- [x] 8.3 增强 content.ts 剪贴板操作的 Safari 兼容性（Clipboard API 失败时 fallback 到 execCommand paste）
+- [ ] 8.4 构建并在 Safari 中手动测试 ⏳ 等待用户安装 Xcode 并测试

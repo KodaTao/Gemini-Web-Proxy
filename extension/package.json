@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "build": "vite build",
+    "build:safari": "bash ../scripts/build-safari.sh",
     "watch": "vite build --watch"
   },
   "devDependencies": {
