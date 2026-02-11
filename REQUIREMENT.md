@@ -235,7 +235,7 @@ GORM 模型：
    * 通过 `chrome.tabs.sendMessage` 将指令转发给 **Content Script**。
 4. **Extension (Content Script)** 执行 DOM 操作：
    * **新对话处理**: 如果请求未携带 `conversation_id`，先通过 `Shift+Cmd+O` 快捷键创建新对话，并检查确保使用 Pro 模型。
-   * **定位输入框**: 寻找 Quill 编辑器 `div.ql-editor[contenteditable="true"]`。
+   * **定位输入框**: 寻找 Quill 编辑器 `rich-textarea .ql-editor[contenteditable="true"]`（新版 UI 使用 `rich-textarea` 组件包裹，class 含 `new-input-ui`，`aria-label="在此处输入提示"`）。
    * **模拟输入**: 多策略尝试 (剪贴板粘贴 → execCommand → 直接 DOM 操作)。输入内容为 XML 格式的完整对话历史，包含 system/user/assistant 角色。
    * **点击发送**: 等待发送按钮从 `aria-disabled` 变为可用后点击（含重试机制）。
 
@@ -247,9 +247,9 @@ GORM 模型：
    * **提取内容**: 获取最后一个 `model-response` 容器的文本/HTML。
 2. **Extension** 将提取的内容通过 WS 发回 Server (`EVENT_REPLY`)。
    * `status: "PROCESSING"` — 生成中，附带当前已生成的纯文本（DOM 提取）。
-   * `status: "DONE"` — 生成完成，附带 **Markdown 格式**的完整文本（通过复制按钮获取）。
-   * 回复内容提取时过滤思考过程区域 (`.model-thoughts`)，优先从 `.markdown` 元素获取纯文本。
-   * **回复完成后的流程**：点击复制按钮获取 Markdown → 删除当前对话 → 发送 DONE → 上报 idle。
+   * `status: "DONE"` — 生成完成，附带 **Markdown 格式**的完整文本（通过 cheerio + turndown 将回复 HTML 转换为 Markdown）。
+   * 回复内容提取时过滤思考过程区域 (`.model-thoughts`)，优先从 `.markdown-main-panel` 元素获取 HTML。
+   * **回复完成后的流程**：HTML→Markdown 转换 → 删除当前对话 → 发送 DONE → 上报 idle。
 3. **Server** 收到回复后：
    * 如果请求是流式 (`stream: true`)：PROCESSING 事件计算差量推送 SSE chunk（纯文本），DONE 时不追加内容 delta（避免与 Markdown 文本重复），只发 finish chunk。
    * 如果请求是非流式 (`stream: false`)：等待 DONE 状态后，一次性返回 Markdown 格式的完整响应。

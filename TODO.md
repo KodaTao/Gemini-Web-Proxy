@@ -49,7 +49,7 @@
 - [x] SSE 流式响应格式修复：ChatMessage 添加 omitempty 符合 OpenAI 规范
 - [x] 多角色消息支持：messages 序列化为 XML 格式（chat_history + CDATA），支持 system/user/assistant 完整对话上下文
 - [x] 修复 XML 内容粘贴失败：粘贴成功判断改为检查内容长度，策略3 innerHTML 转义 HTML 特殊字符
-- [x] Markdown 内容获取：回复完成后点击复制按钮从剪贴板获取 Markdown 格式内容，替代 DOM 纯文本提取
+- [x] Markdown 内容获取：使用 cheerio + turndown 将回复 HTML 直接转换为 Markdown，替代剪贴板方式
 - [x] 流式防重复：Server 端 PROCESSING 推增量 chunk，DONE 跳过 content delta 只发 finish，避免内容重复
 - [x] 流程优化：复制内容 → 删除对话 → 发送 DONE → 上报 idle
 - [x] 悬浮窗设置面板：在 overlay 中新增设置按钮，点击展开 WS 地址配置面板，支持保存并触发重连
@@ -83,3 +83,10 @@
 - [x] 8.2 在 package.json 中添加 `build:safari` npm 脚本
 - [x] 8.3 增强 content.ts 剪贴板操作的 Safari 兼容性（Clipboard API 失败时 fallback 到 execCommand paste）
 - [ ] 8.4 构建并在 Safari 中手动测试 ⏳ 等待用户安装 Xcode 并测试
+
+## Gemini 新版 UI 适配
+
+- [x] 10.1 更新 findInputElement 选择器适配新版输入框（rich-textarea + new-input-ui）
+- [x] 10.2 输入框定位测试通过
+- [ ] 10.3 修复删除对话确认按钮点击失败：Angular Material 按钮需要原生 .click() 而非 dispatchEvent
+- [ ] 10.4 构建并测试 ⏳ 等待用户测试

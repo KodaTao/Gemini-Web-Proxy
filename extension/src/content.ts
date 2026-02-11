@@ -29,7 +29,12 @@ setInterval(pollConnectionStatus, 3000);
  */
 function findInputElement(): HTMLElement | null {
   const selectors = [
-    // Gemini 的 Quill 编辑器
+    // 新版 Gemini UI (2025+): rich-textarea 组件 + new-input-ui
+    'rich-textarea .ql-editor.new-input-ui[contenteditable="true"]',
+    'rich-textarea .ql-editor[contenteditable="true"][role="textbox"]',
+    'div[contenteditable="true"][aria-label="在此处输入提示"]',
+    'div[contenteditable="true"][aria-label*="Enter a prompt"]',
+    // 旧版 Gemini Quill 编辑器
     'div.ql-editor[contenteditable="true"][role="textbox"]',
     'div.ql-editor.textarea[contenteditable="true"]',
     '.ql-editor[contenteditable="true"]',
@@ -396,7 +401,7 @@ async function deleteCurrentConversation(): Promise<void> {
     console.log("[Content] actions menu button not found, skipping delete");
     return;
   }
-  simulateClick(menuBtn);
+  menuBtn.click();
   await randomDelay(400, 700);
 
   // 2. 点击删除按钮
@@ -408,17 +413,17 @@ async function deleteCurrentConversation(): Promise<void> {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     return;
   }
-  simulateClick(deleteBtn);
+  deleteBtn.click();
   await randomDelay(400, 700);
 
-  // 3. 等待确认弹窗出现并点击确认
+  // 3. 等待确认弹窗出现并点击确认（Angular Material 按钮需要原生 .click()）
   for (let i = 0; i < 6; i++) {
     const confirmBtn = document.querySelector<HTMLElement>(
       'button[data-test-id="confirm-button"]'
     );
     if (confirmBtn) {
       console.log("[Content] clicking confirm button");
-      simulateClick(confirmBtn);
+      confirmBtn.click();
       await randomDelay(300, 600);
       console.log("[Content] conversation deleted");
       return;
